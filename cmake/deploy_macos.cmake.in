@@ -1,0 +1,63 @@
+# Deploy only the platform plugins used by this Widgets application.
+# This also avoids unrelated optional Homebrew Qt modules.
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef staging_id)
+set(staging "/private/tmp/optical-cad-deploy-${staging_id}")
+file(MAKE_DIRECTORY "${staging}")
+file(COPY "${CMAKE_INSTALL_PREFIX}/optical_cad.app" DESTINATION "${staging}")
+set(bundle "${staging}/optical_cad.app")
+file(COPY "$<TARGET_FILE:optical_cad>" DESTINATION "${bundle}/Contents/MacOS")
+file(REMOVE_RECURSE "${bundle}/Contents/Frameworks" "${bundle}/Contents/PlugIns")
+file(REAL_PATH "@OPTICS_QT_PLUGINS@/platforms/libqcocoa.dylib" cocoa_plugin)
+file(REAL_PATH "@OPTICS_QT_PLUGINS@/platforms/libqoffscreen.dylib" offscreen_plugin)
+file(INSTALL DESTINATION "${bundle}/Contents/PlugIns/platforms" TYPE FILE
+    FILES "${cocoa_plugin}" "${offscreen_plugin}")
+execute_process(COMMAND "@OPTICS_MACDEPLOYQT@" "${bundle}"
+    -no-plugins -no-codesign -always-overwrite "-libpath=@OPTICS_QT_LIBS@"
+    "-executable=${bundle}/Contents/PlugIns/platforms/libqcocoa.dylib"
+    "-executable=${bundle}/Contents/PlugIns/platforms/libqoffscreen.dylib"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT result EQUAL 0 OR "${output}${errors}" MATCHES "ERROR:")
+    message(FATAL_ERROR "macOS Qt deployment failed: ${output}${errors}")
+endif()
+execute_process(COMMAND /bin/chmod -R u+w "${bundle}" COMMAND_ERROR_IS_FATAL ANY)
+# Dependencies are already copied and rewritten by macdeployqt. Homebrew may
+# leave optional absolute search paths inside them; remove those before signing.
+file(GLOB_RECURSE deployed_files LIST_DIRECTORIES false "${bundle}/Contents/*")
+foreach(deployed_file IN LISTS deployed_files)
+    if(IS_SYMLINK "${deployed_file}")
+        continue()
+    endif()
+    file(READ "${deployed_file}" macho_header LIMIT 4 HEX)
+    if(NOT macho_header MATCHES "^(feedface|cefaedfe|feedfacf|cffaedfe|cafebabe|bebafeca)$")
+        continue()
+    endif()
+    execute_process(COMMAND /usr/bin/otool -l "${deployed_file}" OUTPUT_VARIABLE load_commands
+        COMMAND_ERROR_IS_FATAL ANY)
+    string(REGEX MATCHALL "path [^\r\n]+ \\(offset [0-9]+\\)" search_paths "${load_commands}")
+    foreach(search_path IN LISTS search_paths)
+        string(REGEX REPLACE "^path (.*) \\(offset [0-9]+\\)$" "\\1" search_path "${search_path}")
+        if(search_path MATCHES "^(/opt/homebrew|/usr/local)/")
+            execute_process(COMMAND /usr/bin/install_name_tool -delete_rpath "${search_path}"
+                "${deployed_file}" COMMAND_ERROR_IS_FATAL ANY)
+        endif()
+    endforeach()
+endforeach()
+execute_process(COMMAND /usr/bin/xattr -cr "${bundle}" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND /usr/bin/codesign --force --deep --sign - --timestamp=none "${bundle}"
+    COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${bundle}"
+    COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE_RECURSE "${CMAKE_INSTALL_PREFIX}/optical_cad.app")
+file(COPY "${bundle}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
+# Archive directly from the verified staging directory. Synced Documents
+# folders can add Finder metadata after copying, which invalidates macOS
+# bundle verification even when the executable bytes are unchanged.
+execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${bundle}"
+    "${CMAKE_INSTALL_PREFIX}/OpticalCAD-macOS-arm64.app.zip" COMMAND_ERROR_IS_FATAL ANY)
+set(package "${staging}/OpticalCAD-@PROJECT_VERSION@")
+file(MAKE_DIRECTORY "${package}")
+file(COPY "${bundle}" "${CMAKE_INSTALL_PREFIX}/examples" "${CMAKE_INSTALL_PREFIX}/docs"
+    "${CMAKE_INSTALL_PREFIX}/README.md" DESTINATION "${package}")
+execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${package}"
+    "${CMAKE_INSTALL_PREFIX}/OpticalCAD-@PROJECT_VERSION@-macOS-arm64.zip" COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE_RECURSE "${staging}")

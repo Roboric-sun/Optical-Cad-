@@ -1,0 +1,16 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {"name": "desktop", "displayName": "Desktop Release", "binaryDir": "${sourceDir}/build", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "OPTICS_BUILD_GUI": "ON"}},
+    {"name": "core", "displayName": "Core without Qt", "binaryDir": "${sourceDir}/build-core", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "OPTICS_BUILD_GUI": "OFF"}}
+  ],
+  "buildPresets": [
+    {"name": "desktop", "configurePreset": "desktop", "configuration": "Release"},
+    {"name": "core", "configurePreset": "core", "configuration": "Release"}
+  ],
+  "testPresets": [
+    {"name": "desktop", "configurePreset": "desktop", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "core", "configurePreset": "core", "configuration": "Release", "output": {"outputOnFailure": true}}
+  ]
+}

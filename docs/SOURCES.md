@@ -1,0 +1,13 @@
+# Источники и зависимости
+
+Требования: приложения Г/Д и презентация пользователя из Downloads. Извлечённые текст и изображения сохранены в `docs/source`; оригиналы не изменялись.
+
+Собственное ядро написано для этого проекта: векторная геометрия, пересечения, закон Снеллиуса, Френель, параксиальные матрицы, опорная сфера, radix-2 FFT и статистический поиск столкновений. Исходный расчётный код Geopter не включён и не вызывается.
+
+- [Geopter](https://github.com/heterophyllus/Geopter) — ориентир по функциям и публичный формат обмена. Для определения полей JSON прочитаны `optical_system.cpp`, `pupil_spec.h` и определение степеней `even_polynomial`; реализация импортера самостоятельная. Публичный `example/book/kingslake_doublet.json` использован локально для проверки переноса, не распространяется в этом репозитории. `tests/data/geopter_singlet.json` — собственный синтетический тест.
+- [Официальная страница SCHOTT optical glass](https://www.schott.com/en-gb/products/optical-glass-p1000267) и [каталог Zemax](https://media.schott.com/api/public/content/a79c07aa61da4c05a2c0bbab93d09a7f?download=true&v=3b65e351) — числовые коэффициенты, nd/Vd и диапазоны LD. Из файла `schott glasses preferred and special June-2025-B.AGF` извлечены 365 записей формулы 2 в `src/core/schott_data.inc`. Получено 4 октября 2026. Не все записи означают доступные для заказа марки; каталог включает специальные и исторические данные.
+- [Ansys — Glass Dispersion Formulas](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_Glass_Dispersion_Formulas.html) — соглашение о длине волны в мкм и формулах AGF. Импорт ограничен Sellmeier 1.
+- Кварцевое стекло: коэффициенты I. H. Malitson, *Interspecimen comparison of the refractive index of fused silica*, JOSA 55, 1205–1209 (1965), DOI [10.1364/JOSA.55.001205](https://doi.org/10.1364/JOSA.55.001205).
+- [Qt](https://www.qt.io/) — динамически подключённые Widgets/Concurrent/Test, собственная лицензия поставщика. Qt не является оптическим ядром. Сведения о лицензировании и исходниках: [Qt licensing](https://doc.qt.io/qt-6/licensing.html), [Qt source downloads](https://download.qt.io/official_releases/qt/).
+
+Локальная сборка проверена с Apple Clang 21, CMake 4.2.1 и Qt 6.11.1 на ARM64 macOS. Репозиторий не содержит исходный код сторонних библиотек. Qt имеет собственную лицензию поставщика; данный проект пока не устанавливает лицензию на собственный код.
