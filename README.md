@@ -83,7 +83,7 @@ cmake --install build --config Release --prefix release
 .\scripts\build_windows.ps1 -QtRoot 'C:\Qt\<version>\msvc2022_64'
 ```
 
-Сборка macOS проверена на текущем ARM64 Mac с Qt 6.11.1. GitHub Actions при каждом push и pull request собирает приложение с Qt 6.11.1 на macOS/Windows, запускает физические и интерфейсные тесты и сохраняет готовые пакеты в артефактах. Отдельная Linux-сборка проверяет ядро без Qt. [Результаты автосборок и доступные пакеты](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml) видны после входа в GitHub с доступом к закрытому репозиторию.
+Сборка macOS проверена на текущем ARM64 Mac с Qt 6.11.1. GitHub Actions при каждом push и pull request собирает приложение с Qt 6.11.1 на macOS и Qt 6.8.3 для MSVC 2022 на Windows, запускает физические и интерфейсные тесты и сохраняет готовые пакеты в артефактах. Отдельная Linux-сборка проверяет ядро без Qt. [Результаты автосборок и доступные пакеты](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml) видны после входа в GitHub с доступом к закрытому репозиторию.
 
 Без интерфейса:
 
