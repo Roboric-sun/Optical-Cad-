@@ -37,6 +37,12 @@ if(OPTICS_BUILD_GUI)
   target_compile_definitions(optics_gui_tests PRIVATE OPTICS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME optics_gui COMMAND optics_gui_tests)
   set_tests_properties(optics_gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  if(WIN32)
+    # The offscreen plugin uses FreeType rather than the native Windows font
+    # database. Point it at system fonts for real glyphs and layout metrics.
+    file(TO_CMAKE_PATH "$ENV{SystemRoot}/Fonts" OPTICS_TEST_FONT_DIR)
+    set_property(TEST optics_gui APPEND PROPERTY ENVIRONMENT "QT_QPA_FONTDIR=${OPTICS_TEST_FONT_DIR}")
+  endif()
   install(TARGETS optical_cad BUNDLE DESTINATION . RUNTIME DESTINATION bin)
   install(DIRECTORY examples DESTINATION .)
   install(FILES README.md DESTINATION .)

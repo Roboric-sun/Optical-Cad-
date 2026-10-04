@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QHeaderView>
 #include <QLayout>
 #include <QLineEdit>
@@ -54,6 +55,8 @@ int main(int argc, char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     try {
+        check(!QFontDatabase::families().isEmpty(),
+              "System fonts available for GUI layout and text rendering");
         QTemporaryDir temp;
         Project original;
         optics::autofocus(original.system, original.catalog);
