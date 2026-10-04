@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 import os
+import zipfile
+import plistlib
 
 
 def verify(bundle: Path) -> None:
@@ -70,6 +72,20 @@ def verify(bundle: Path) -> None:
                 or project["sequential"]["solves"][0]["kind"] != 4
             ):
                 raise RuntimeError("Ray-height example is incomplete")
+    # Validate companion files in the full ZIP too, not just the executable bundle.
+    with (bundle / "Contents/Info.plist").open("rb") as plist:
+        version = plistlib.load(plist)["CFBundleVersion"]
+    archive = bundle.parent / f"OpticalCAD-{version}-macOS-arm64.zip"
+    if archive.exists():
+        with zipfile.ZipFile(archive) as zipped:
+            names = zipped.namelist()
+            prefix = names[0].split("/")[0] + "/"
+            required = ["docs/ROADMAP_RU.md", "docs/BENCHMARKS_RU.md",
+                        "scripts/reference_doublet.py", "examples/marginal_focus.optcad",
+                        "examples/geopter/kingslake_doublet.json"]
+            for relative in required:
+                if prefix + relative not in names:
+                    raise RuntimeError(f"Missing companion file in {archive}: {relative}")
     print(f"Package OK: {objects} Mach-O objects, local dependencies, six generated examples.")
 
 

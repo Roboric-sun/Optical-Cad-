@@ -12,7 +12,7 @@
 open release/macOS/optical_cad.app
 ```
 
-В `examples` находятся пять самостоятельных проектов: `singlet.optcad`, `achromat.optcad`, `led_illuminator.optcad`, `spectral_prism.optcad`, `linked_singlet.optcad`, `marginal_focus.optcad`. Открывайте их через «Файл → Открыть». Оба режима хранятся в одном файле. Результаты анализа рассчитываются заново после открытия.
+В `examples` находятся шесть самостоятельных проектов: `singlet.optcad`, `achromat.optcad`, `led_illuminator.optcad`, `spectral_prism.optcad`, `linked_singlet.optcad`, `marginal_focus.optcad`. Открывайте их через «Файл → Открыть». Оба режима хранятся в одном файле. Результаты анализа рассчитываются заново после открытия.
 
 ## Версия 0.7 — условие высоты луча
 

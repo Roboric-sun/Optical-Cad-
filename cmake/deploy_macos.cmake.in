@@ -57,7 +57,7 @@ execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${bundle}"
 set(package "${staging}/OpticalCAD-@PROJECT_VERSION@")
 file(MAKE_DIRECTORY "${package}")
 file(COPY "${bundle}" "${CMAKE_INSTALL_PREFIX}/examples" "${CMAKE_INSTALL_PREFIX}/docs"
-    "${CMAKE_INSTALL_PREFIX}/README.md" DESTINATION "${package}")
+    "${CMAKE_INSTALL_PREFIX}/README.md" "${CMAKE_INSTALL_PREFIX}/scripts" DESTINATION "${package}")
 execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${package}"
     "${CMAKE_INSTALL_PREFIX}/OpticalCAD-@PROJECT_VERSION@-macOS-arm64.zip" COMMAND_ERROR_IS_FATAL ANY)
 file(REMOVE_RECURSE "${staging}")
