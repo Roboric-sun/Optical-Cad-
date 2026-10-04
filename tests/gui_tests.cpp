@@ -114,12 +114,19 @@ int main(int argc, char** argv) {
         auto* rs = w.findChild<QScrollArea*>("ribbonScroll");
         const bool sequentialFits = QTest::qWaitFor(
             [&] { return rs->horizontalScrollBar()->maximum() == 0; }, 1500);
-        if (!sequentialFits)
-            qWarning("Ribbon: window=%d viewport=%d contents=%d natural=%d steps=%d overflow=%d",
-                     w.width(), rs->viewport()->width(), rs->widget()->width(),
-                     rs->widget()->property("naturalWidth").toInt(),
-                     rs->widget()->property("compressionSteps").toInt(),
-                     rs->horizontalScrollBar()->maximum());
+        if (!sequentialFits) {
+            auto* ribbon = rs->widget();
+            std::cerr << "Ribbon: window=" << w.width() << " viewport="
+                      << rs->viewport()->width() << " contents=" << ribbon->width()
+                      << " minimum=" << ribbon->minimumSizeHint().width() << " natural="
+                      << ribbon->property("naturalWidth").toInt() << " steps="
+                      << ribbon->property("compressionSteps").toInt() << " overflow="
+                      << rs->horizontalScrollBar()->maximum() << '\n';
+            for (auto* button : ribbon->findChildren<QToolButton*>())
+                std::cerr << button->objectName().toStdString() << " font="
+                          << button->font().pixelSize() << " hint=" << button->sizeHint().width()
+                          << " width=" << button->width() << '\n';
+        }
         check(sequentialFits, "Sequential ribbon fits default window");
         auto* modes = w.findChild<QTabBar*>("modeTabs");
         check(modes->count() == 9 && modes->tabText(5) == "Библиотеки",

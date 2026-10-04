@@ -1103,8 +1103,14 @@ void Window::fitRibbon() {
         int size = large ? std::max(18, qRound(32 * scale) - 2 * steps)
                          : std::max(10, qRound(16 * scale) - steps);
         b->setIconSize({size, size});
+        b->updateGeometry();
     }
-    ribbon_->layout()->invalidate();
+    // Each group and command column caches its minimum size. Refresh nested
+    // layouts too, so the scroll area can shrink after changing font metrics.
+    for (auto* layout : ribbon_->findChildren<QLayout*>())
+        layout->invalidate();
+    ribbon_->layout()->activate();
+    ribbon_->updateGeometry();
     QTimer::singleShot(0, this, [this] {
         auto* scroll = findChild<QScrollArea*>("ribbonScroll");
         const int steps = ribbon_->property("compressionSteps").toInt();
