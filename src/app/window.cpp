@@ -155,7 +155,7 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.6",
+            this, "Optical CAD 0.7",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
@@ -688,7 +688,7 @@ void Window::checkpoint() {
     redo_.clear();
 }
 void Window::changed(bool rebuild) {
-    try { applySolves(project_.system); }
+    try { applySolves(project_.system, project_.catalog); }
     catch (const std::exception&) { /* recalculate reports an invalid constraint without stale analyses */ }
     if (!project_.system.solves.empty()) rebuild = true;
     dirty_ = true;
@@ -720,7 +720,7 @@ void Window::undo(bool redo) {
     changeMode(project_.mode);
 }
 void Window::setProject(Project p) {
-    applySolves(p.system);
+    applySolves(p.system, p.catalog);
     parkWorkspace();
     while (views_->count()) {
         auto* w = views_->widget(0);
@@ -1269,7 +1269,7 @@ void Window::properties(int column) {
                 updated.tilt = {values[0]->value(), values[1]->value(), values[2]->value()};
                 updated.decenter = {values[3]->value(), values[4]->value(), values[5]->value()};
             }
-            try { applySolves(candidate); }
+            try { applySolves(candidate, project_.catalog); }
             catch (const std::exception& e) { error(e); return; }
             checkpoint();
             project_.system = std::move(candidate);
@@ -1577,7 +1577,7 @@ void Window::rebuildTree() {
             }
         }
         QString imagePosition;
-        try { imagePosition = "Z " + num(s.imageZ()) + " мм"; }
+        try { imagePosition = "Z " + num(s.imageZ(project_.catalog)) + " мм"; }
         catch (const std::exception&) { imagePosition = "Ошибка связи параметров"; }
         node(surfaces, QString::number(s.surfaces.size() + 1) + " Изображение", imagePosition, "image");
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
@@ -1886,7 +1886,7 @@ void Window::editSurface(int r, int c) {
     }
     auto system = project_.system;
     system.surfaces[r] = candidate;
-    try { applySolves(system); }
+    try { applySolves(system, project_.catalog); }
     catch (const std::exception& e) { rebuildEditors(); error(e); return; }
     checkpoint();
     project_.system = std::move(system);
@@ -2052,9 +2052,9 @@ bool Window::addSurface() {
     reindexOptimization(candidate, at, 0, 1);
     std::vector<size_t> map(count + 1);
     for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 1;
-    try { reindexSolves(candidate.system, map); }
-    catch (const std::exception& e) { error(e); return false; }
     if (at <= candidate.system.stop) ++candidate.system.stop;
+    try { reindexSolves(candidate.system, map, candidate.catalog); }
+    catch (const std::exception& e) { error(e); return false; }
     checkpoint();
     project_ = std::move(candidate);
     selected_ = int(at);
@@ -2078,9 +2078,9 @@ void Window::addLens() {
     reindexOptimization(candidate, at, 0, 2);
     std::vector<size_t> map(count + 1);
     for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 2;
-    try { reindexSolves(candidate.system, map); }
-    catch (const std::exception& e) { error(e); return; }
     if (at <= candidate.system.stop) candidate.system.stop += 2;
+    try { reindexSolves(candidate.system, map, candidate.catalog); }
+    catch (const std::exception& e) { error(e); return; }
     checkpoint();
     project_ = std::move(candidate);
     selected_ = int(at);
@@ -2103,12 +2103,12 @@ void Window::moveSurface(int step) {
     std::vector<size_t> map(s.surfaces.size() + 1);
     for (size_t i = 0; i < map.size(); ++i) map[i] = i;
     std::swap(map[selected_], map[to]);
-    try { reindexSolves(s, map); }
-    catch (const std::exception& e) { error(e); return; }
     if (s.stop == size_t(selected_))
         s.stop = to;
     else if (s.stop == size_t(to))
         s.stop = selected_;
+    try { reindexSolves(s, map, candidate.catalog); }
+    catch (const std::exception& e) { error(e); return; }
     checkpoint();
     project_ = std::move(candidate);
     selected_ = to;
@@ -2126,11 +2126,11 @@ void Window::removeRow() {
         std::vector<size_t> map(count + 1);
         for (size_t i = 0; i <= count; ++i)
             map[i] = i < size_t(selected_) ? i : i == size_t(selected_) ? SIZE_MAX : i - 1;
-        try { reindexSolves(s, map); }
-        catch (const std::exception& e) { error(e); return; }
         if (s.stop > size_t(selected_))
             --s.stop;
         s.stop = std::min(s.stop, s.surfaces.size() - 1);
+        try { reindexSolves(s, map, candidate.catalog); }
+        catch (const std::exception& e) { error(e); return; }
         checkpoint();
         project_ = std::move(candidate);
     } else {
@@ -2197,7 +2197,8 @@ void Window::parameters() {
     QDialog dialog(this);
     dialog.setWindowTitle("Параметры последовательной системы");
     auto* form = new QFormLayout(&dialog);
-    auto& s = project_.system;
+    const auto s = project_.system;
+    const auto revision = revision_;
     auto* name = new QLineEdit(str(s.name));
     form->addRow("Название", name);
     auto* type = new QComboBox;
@@ -2233,6 +2234,7 @@ void Window::parameters() {
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         try {
+            if (revision != revision_) throw std::invalid_argument("Проект изменился: откройте параметры заново");
             auto candidate = s;
             candidate.name = name->text().toStdString();
             candidate.objectDistance = distance->value();
@@ -2278,14 +2280,15 @@ void Window::parameters() {
                     candidate.pupilDiameter = 2 * f * tan(asin(na));
                 }
             }
+            applySolves(candidate, project_.catalog);
             auto errors = candidate.validate(project_.catalog);
             if (!errors.empty())
                 throw std::invalid_argument(errors.front());
             checkpoint();
-            s = candidate;
+            project_.system = candidate;
             if (project_.optimization) {
                 std::erase_if(project_.optimization->operands, [&](auto o) {
-                    return o.field >= 0 && size_t(o.field) >= s.fields.size();
+                    return o.field >= 0 && size_t(o.field) >= candidate.fields.size();
                 });
                 if (project_.optimization->operands.empty()) project_.optimization.reset();
             }
@@ -2818,9 +2821,17 @@ void Window::writeExamples(const QString& directory) {
     edge.parameter = SolveParameter::Thickness; edge.kind = SolveKind::EdgeThickness;
     edge.surface = 0; edge.reference = 1; edge.height = 12.5; edge.value = 1;
     linked.system.solves = {pickup, edge};
-    applySolves(linked.system);
+    applySolves(linked.system, linked.catalog);
     optics::autofocus(linked.system, linked.catalog);
     saveProject(directory + "/linked_singlet.optcad", linked);
+    Project marginal;
+    marginal.system.name = "Линза — фокус по краевому лучу";
+    ParameterSolve ray;
+    ray.parameter = SolveParameter::Thickness; ray.kind = SolveKind::MarginalHeight;
+    ray.surface = 1; ray.reference = 2; ray.value = 0; ray.pupil = 1;
+    marginal.system.solves = {ray};
+    applySolves(marginal.system, marginal.catalog);
+    saveProject(directory + "/marginal_focus.optcad", marginal);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

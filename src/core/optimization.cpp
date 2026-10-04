@@ -98,7 +98,7 @@ MeritEvaluation evaluateMerit(const SequentialSystem& s, const Catalog& c,
                              const OptimizationPlan& p) {
     auto errors = p.validate(s);
     if (!errors.empty()) throw std::invalid_argument(errors.front());
-    if (!s.solves.empty()) return evaluateMerit(resolvedSystem(s), c, p);
+    if (!s.solves.empty()) return evaluateMerit(resolvedSystem(s, c), c, p);
     if (errors.empty())
         errors = s.validate(c);
     if (!errors.empty())
@@ -193,7 +193,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
             throw std::invalid_argument("Начальное значение переменной выходит за границы");
     }
     auto best = s;
-    applySolves(best);
+    applySolves(best, c);
     if (p.refocus) autofocus(best, c);
     OptimizationResult out;
     out.before = evaluateMerit(best, c, p).score;
@@ -223,7 +223,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
                 setVariable(trial, v, next);
                 ++out.evaluations;
                 try {
-                    applySolves(trial);
+                    applySolves(trial, c);
                     if (p.refocus) autofocus(trial, c);
                     double score = evaluateMerit(trial, c, p).score;
                     if (score < out.after) {

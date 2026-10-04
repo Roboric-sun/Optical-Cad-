@@ -41,7 +41,7 @@ struct Wavelength {
 };
 enum class SolveParameter { Radius, Thickness };
 // Append kinds so saved numeric identifiers keep their meaning.
-enum class SolveKind { Pickup, EdgeThickness, OverallLength, CurvaturePickup };
+enum class SolveKind { Pickup, EdgeThickness, OverallLength, CurvaturePickup, MarginalHeight };
 struct ParameterSolve {
     SolveParameter parameter = SolveParameter::Radius;
     size_t surface = 0;
@@ -50,6 +50,8 @@ struct ParameterSolve {
     double scale = 1, offset = 0; // offset: mm for Pickup, 1/mm for CurvaturePickup
     double value = 0, height = 0; // edge thickness/total length and radial height, mm
     size_t first = 0, last = 0; // sum [first,last); image endpoint (last=N) includes defocus
+    size_t field = 0, wavelength = SIZE_MAX; // SIZE_MAX follows the primary wavelength
+    double pupil = 1; // signed normalized meridional pupil coordinate, [-1,1]
 };
 struct SequentialSystem {
     std::string name = "Двояковыпуклая линза";
@@ -61,7 +63,9 @@ struct SequentialSystem {
     int pupilGrid = 17;
     std::vector<ParameterSolve> solves;
     double imageZ() const;
+    double imageZ(const Catalog&) const;
     std::vector<double> vertices() const;
+    std::vector<double> vertices(const Catalog&) const;
     std::vector<std::string> validate(const Catalog&) const;
     static SequentialSystem demo();
 };
@@ -69,10 +73,14 @@ bool isSolved(const SequentialSystem&, SolveParameter, size_t surface);
 bool imageThicknessLinked(const SequentialSystem&);
 // Transactional: failure leaves every cached scalar and constraint unchanged.
 void applySolves(SequentialSystem&);
+// Ray-dependent constraints require the project's actual material catalog.
+void applySolves(SequentialSystem&, const Catalog&);
 // Values-only snapshot for tracing: resolves once, then drops constraint metadata.
 SequentialSystem resolvedSystem(const SequentialSystem&);
+SequentialSystem resolvedSystem(const SequentialSystem&, const Catalog&);
 // Mapping includes the old image endpoint; SIZE_MAX means a removed surface.
 void reindexSolves(SequentialSystem&, const std::vector<size_t>& oldToNew);
+void reindexSolves(SequentialSystem&, const std::vector<size_t>& oldToNew, const Catalog&);
 struct Ray {
     Vec3 origin, direction{0, 0, 1};
     double wavelength = 0.5875618, power = 1;

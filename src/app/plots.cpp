@@ -192,8 +192,14 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         return;
     }
     auto& d = *data_;
-    auto& sys = d.project.system;
     auto& cat = d.project.catalog;
+    SequentialSystem physical;
+    try { physical = resolvedSystem(d.project.system, cat); }
+    catch (const std::exception& e) {
+        p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, QString::fromUtf8(e.what()));
+        return;
+    }
+    const auto& sys = physical;
     if (!d.error.isEmpty()) {
         p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.error);
         return;

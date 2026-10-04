@@ -16,6 +16,16 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     if (err.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid Geopter JSON");
     auto root = doc.object();
+    auto checkSolveMetadata = [](QJsonObject object, QString location) {
+        // The pinned Geopter JSON writer has no solve records. Reject unrecognized
+        // extensions carrying rules instead of silently importing their cached numbers.
+        for (auto it = object.begin(); it != object.end(); ++it)
+            if (it.key().compare("Solve", Qt::CaseInsensitive) == 0 ||
+                it.key().compare("Solves", Qt::CaseInsensitive) == 0 ||
+                it.key().compare("Pickup", Qt::CaseInsensitive) == 0)
+                throw std::invalid_argument(("Geopter: unsupported solve metadata at " + location + "." + it.key()).toStdString());
+    };
+    checkSolveMetadata(root, "root");
     Project p;
     p.catalog = catalog;
     auto& s = p.system;
@@ -29,6 +39,9 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     auto spec = root["Spec"].toObject(), pupil = spec["Pupil"].toObject(),
          field = spec["Field"].toObject(), wave = spec["Wvl"].toObject(),
          assembly = root["Assembly"].toObject();
+    checkSolveMetadata(assembly, "Assembly");
+    for (auto it = assembly.begin(); it != assembly.end(); ++it)
+        if (it.value().isObject()) checkSolveMetadata(it.value().toObject(), "Assembly." + it.key());
     int pupilType = int(value(pupil, "Type"));
     if (pupilType != 0 && pupilType != 1)
         throw std::invalid_argument(
