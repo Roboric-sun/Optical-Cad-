@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <algorithm>
 
 using namespace optics;
 void reindexOptimization(Project& p, size_t at, size_t removed, size_t inserted) {
@@ -138,8 +139,11 @@ QByteArray serializeProject(const Project& p) {
                       {"displayRays", double(n.displayRays)},
                       {"maxSegments", double(n.maxSegments)},
                       {"seed", QString::number(n.seed)}};
+    const bool curvature = std::any_of(s.solves.begin(), s.solves.end(), [](const auto& a) {
+        return a.kind == SolveKind::CurvaturePickup;
+    });
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", s.solves.empty() ? 1 : 2},
+                                     {"version", curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -170,7 +174,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -230,7 +234,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         for (auto val : seq["solves"].toArray()) {
             auto j = val.toObject();
             s.solves.push_back({SolveParameter(integer(j, "parameter", 1)),
-                integer(j, "surface", 499), SolveKind(integer(j, "kind", 2)),
+                integer(j, "surface", 499), SolveKind(integer(j, "kind", root["version"] == 3 ? 3 : 2)),
                 integer(j, "reference", 499), number(j, "scale"), number(j, "offset"),
                 number(j, "value"), number(j, "height"), integer(j, "first", 499),
                 integer(j, "last", 500)});

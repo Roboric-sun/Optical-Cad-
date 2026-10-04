@@ -1,4 +1,5 @@
 #include "window.hpp"
+#include "learning_help.hpp"
 #include "office.hpp"
 #include "optimization_editor.hpp"
 #include "solve_editor.hpp"
@@ -154,7 +155,7 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.5",
+            this, "Optical CAD 0.6",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
@@ -167,6 +168,8 @@ Window::Window(QWidget* parent)
             "требуют центрированной системы; проверяйте его применимость. Каталожные модели без "
             "температуры/давления. Полное соответствие Geopter пока не подтверждено.");
     });
+    action(help, "Как устроена программа — изучаем C++", QKeySequence::HelpContents,
+           [this] { showLearningGuide(this); })->setObjectName("learningGuideAction");
     // One Office-style ribbon: title, context tabs, commands, group captions.
     auto* header = new QWidget;
     header->setObjectName("ribbonHeader");

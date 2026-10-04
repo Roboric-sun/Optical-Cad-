@@ -10,6 +10,9 @@
 
 using namespace optics;
 QString solveDescription(const ParameterSolve& a) {
+    if (a.kind == SolveKind::CurvaturePickup)
+        return QString("Кривизна: %1 × (1/R поверхности %2) + %3 1/мм; плоскость = 0")
+            .arg(a.scale).arg(a.reference + 1).arg(a.offset, 0, 'g', 12);
     if (a.kind == SolveKind::Pickup)
         return QString("Связь: %1 × поверхность %2 + %3 мм")
             .arg(a.scale).arg(a.reference + 1).arg(a.offset);
@@ -31,9 +34,14 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
     form->addRow(info);
     auto* type = new QComboBox;
     type->setObjectName("solveType");
-    type->addItems({"Фиксированное значение", "Связь с другой поверхностью"});
-    if (parameter == SolveParameter::Thickness)
-        type->addItems({"Краевая толщина", "Общая длина между поверхностями"});
+    type->addItem("Фиксированное значение", -1);
+    type->addItem("Связь с другой поверхностью", int(SolveKind::Pickup));
+    if (parameter == SolveParameter::Thickness) {
+        type->addItem("Краевая толщина", int(SolveKind::EdgeThickness));
+        type->addItem("Общая длина между поверхностями", int(SolveKind::OverallLength));
+    } else {
+        type->addItem("Связь кривизны (1/R)", int(SolveKind::CurvaturePickup));
+    }
     form->addRow("Способ задания", type);
     auto spin = [&](QString id, double initial, double low, double high) {
         auto* box = new QDoubleSpinBox;
@@ -60,6 +68,7 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
     last->setCurrentIndex(int(result_.surfaces.size()));
     auto* scale = spin("solveScale", 1, -1e6, 1e6);
     auto* offset = spin("solveOffset", 0, -1e6, 1e6);
+    offset->setDecimals(12);
     auto* value = spin("solveValue", parameter == SolveParameter::Thickness ? result_.surfaces[surface].thickness : 0, 0, 1e6);
     auto* height = spin("solveHeight", 0, 0, 1e6);
     form->addRow("Поверхность-источник", reference);
@@ -80,18 +89,24 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
     form->addRow(buttons);
     for (const auto& a : result_.solves)
         if (a.surface == surface && a.parameter == parameter) {
-            type->setCurrentIndex(int(a.kind) + 1);
+            type->setCurrentIndex(type->findData(int(a.kind)));
             reference->setCurrentIndex(int(a.reference));
             scale->setValue(a.scale); offset->setValue(a.offset);
             value->setValue(a.value); height->setValue(a.height);
             first->setCurrentIndex(int(a.first)); last->setCurrentIndex(int(a.last));
         }
     auto update = [=, this] {
-        const int t = type->currentIndex();
+        const int kind = type->currentData().toInt();
+        const bool pickup = kind == int(SolveKind::Pickup) || kind == int(SolveKind::CurvaturePickup);
+        if (auto* label = qobject_cast<QLabel*>(form->labelForField(offset)))
+            label->setText(kind == int(SolveKind::CurvaturePickup) ? "Смещение кривизны, 1/мм" : "Смещение, мм");
+        info->setText(kind == int(SolveKind::CurvaturePickup)
+            ? "Кривизна c = 1/R; для плоскости c = 0. Новая c = множитель × c источника + смещение. В таблице показан радиус в мм."
+            : "Связанный параметр пересчитывается при изменении источника. Для ручного редактирования выберите «Фиксированное значение».");
         for (auto* widget : std::initializer_list<QWidget*>{reference, scale, offset, value, height, first, last}) {
-            bool visible = t == 1 ? widget == reference || widget == scale || widget == offset :
-                           t == 2 ? widget == value || widget == height :
-                           t == 3 ? widget == value || widget == first || widget == last : false;
+            bool visible = pickup ? widget == reference || widget == scale || widget == offset :
+                           kind == int(SolveKind::EdgeThickness) ? widget == value || widget == height :
+                           kind == int(SolveKind::OverallLength) ? widget == value || widget == first || widget == last : false;
             form->setRowVisible(widget, visible);
         }
         message->clear();
@@ -108,7 +123,7 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
             if (type->currentIndex()) {
                 ParameterSolve a;
                 a.parameter = parameter; a.surface = surface;
-                a.kind = SolveKind(type->currentIndex() - 1);
+                a.kind = SolveKind(type->currentData().toInt());
                 a.reference = size_t(reference->currentIndex());
                 if (a.kind == SolveKind::EdgeThickness) a.reference = surface + 1;
                 a.scale = scale->value(); a.offset = offset->value();

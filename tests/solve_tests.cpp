@@ -178,5 +178,88 @@ size_t solveChecks() {
     system.surfaces.back().radius = 1000;
     applySolves(system);
     close(system.surfaces.front().radius, 1000, "Dependency chain works at the 500-surface limit");
+
+    // Curvature is reciprocal radius; these numeric expectations are independent.
+    system = SequentialSystem::demo();
+    auto curvature = pickup;
+    curvature.kind = SolveKind::CurvaturePickup;
+    curvature.scale = -2; curvature.offset = .01;
+    system.solves = {curvature};
+    applySolves(system);
+    close(system.surfaces[1].radius, -100. / 3, "Curvature pickup applies scale and offset to 1/R, not R");
+    system.surfaces[0].radius = 100;
+    applySolves(system);
+    close(system.surfaces[1].radius, -100, "Curvature pickup follows a changed source");
+    system.surfaces[0].radius = 0;
+    applySolves(system);
+    close(system.surfaces[1].radius, 100, "Plane source has zero curvature and permits nonzero offset");
+    system.solves[0].offset = 0;
+    applySolves(system);
+    close(system.surfaces[1].radius, 0, "Zero curvature produces the plane radius sentinel");
+    system.surfaces[0].radius = 50;
+    system.solves[0].scale = -1; system.solves[0].offset = .02;
+    applySolves(system);
+    close(system.surfaces[1].radius, 0, "Exact cancellation produces a plane without division by zero");
+    system.solves[0].offset = .020000000001;
+    applySolves(system);
+    check(system.surfaces[1].radius > 1e11 && std::isfinite(system.surfaces[1].radius),
+          "Small nonzero curvature is not silently rounded to a plane");
+    system.solves = {curvature};
+    system.surfaces.push_back(Surface{});
+    auto mixed = pickup; mixed.surface = 2; mixed.reference = 1; mixed.scale = .5; mixed.offset = 2;
+    system.solves.insert(system.solves.begin(), mixed);
+    applySolves(system);
+    close(system.surfaces[2].radius, -50. / 3 + 2, "Mixed radius and curvature chain resolves regardless of rule order");
+    invalid = system;
+    cycle.reference = 2;
+    invalid.solves.push_back(cycle);
+    reject(invalid, "Cycles across radius and curvature links are rejected transactionally");
+    invalid = system; invalid.solves.back().parameter = SolveParameter::Thickness;
+    reject(invalid, "Curvature solve cannot target thickness");
+    invalid = system; invalid.solves.back().reference = 500;
+    reject(invalid, "Curvature solve rejects a missing reference");
+    invalid = system; invalid.surfaces[0].radius = 1e-310;
+    reject(invalid, "Nonrepresentable source curvature is rejected");
+    invalid = system; invalid.surfaces[0].radius = 0;
+    invalid.solves.back().offset = std::numeric_limits<double>::denorm_min();
+    reject(invalid, "Nonrepresentable derived radius is rejected");
+    invalid = system; invalid.surfaces[0].radius = 1e-308;
+    invalid.solves.back().scale = 1e308;
+    reject(invalid, "Overflow during curvature scaling is rejected");
+
+    system = SequentialSystem::demo();
+    curvature.scale = -1; curvature.offset = -.005;
+    system.solves = {edge, curvature};
+    system.surfaces[0].semiDiameter = system.surfaces[1].semiDiameter = 10;
+    applySolves(system);
+    close(system.surfaces[1].radius, -40, "Curvature gives the independent -40 mm rear radius");
+    close(system.surfaces[0].thickness, 1 + 50 - std::sqrt(2400.) + 40 - std::sqrt(1500.),
+          "Edge solve resolves its curvature dependency before evaluating sag");
+    const auto resolved = resolvedSystem(system);
+    close(paraxial(system, catalog, .5875618).efl, paraxial(resolved, catalog, .5875618).efl,
+          "Paraxial analysis uses the resolved curvature geometry");
+    autofocus(system, catalog);
+    close(system.surfaces[1].radius, -40, "Autofocus preserves curvature metadata and values");
+    OptimizationPlan curvaturePlan;
+    curvaturePlan.variables = {{VariableParameter::Radius, 0, 40, 90, 5}};
+    curvaturePlan.operands = {{MeritKind::EFL, -1, 60, 1, 1}};
+    curvaturePlan.iterations = 2; curvaturePlan.pupilGrid = 5;
+    const auto curvatureResult = optimize(system, catalog, curvaturePlan);
+    check(curvatureResult.after <= curvatureResult.before && curvatureResult.evaluations > 1,
+          "Optimization evaluates curved dependent surfaces");
+    close(1 / system.surfaces[1].radius, -1 / system.surfaces[0].radius - .005,
+          "Configured optimizer preserves curvature pickup");
+    close(system.surfaces[0].thickness + sag(system.surfaces[1], 10, 0) - sag(system.surfaces[0], 10, 0), 1,
+          "Configured optimizer preserves edge thickness with curvature links");
+    system = SequentialSystem::demo(); system.solves = {curvature};
+    system.surfaces.insert(system.surfaces.begin(), Surface{});
+    reindexSolves(system, {1,2,3});
+    check(system.solves[0].surface == 2 && system.solves[0].reference == 1,
+          "Insertion preserves curvature pickup identities");
+    close(system.surfaces[2].radius, -40, "Reindexed curvature pickup uses the original source");
+    removed = system; removed.surfaces.erase(removed.surfaces.begin() + 1);
+    failed = false;
+    try { reindexSolves(removed, {0,SIZE_MAX,1,2}); } catch (const std::exception&) { failed = true; }
+    check(failed && removed.solves[0].reference == 1, "Removing curvature source cannot redirect its reference");
     return checks;
 }

@@ -40,13 +40,14 @@ struct Wavelength {
     double um = 0.5875618, weight = 1;
 };
 enum class SolveParameter { Radius, Thickness };
-enum class SolveKind { Pickup, EdgeThickness, OverallLength };
+// Append kinds so saved numeric identifiers keep their meaning.
+enum class SolveKind { Pickup, EdgeThickness, OverallLength, CurvaturePickup };
 struct ParameterSolve {
     SolveParameter parameter = SolveParameter::Radius;
     size_t surface = 0;
     SolveKind kind = SolveKind::Pickup;
     size_t reference = 0;
-    double scale = 1, offset = 0;
+    double scale = 1, offset = 0; // offset: mm for Pickup, 1/mm for CurvaturePickup
     double value = 0, height = 0; // edge thickness/total length and radial height, mm
     size_t first = 0, last = 0; // sum [first,last); image endpoint (last=N) includes defocus
 };

@@ -23,6 +23,12 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Learning example on macOS
+        if: runner.os == 'macOS'
+        run: ./build/optics_learning 70
+      - name: Learning example on Windows
+        if: runner.os == 'Windows'
+        run: .\build\Release\optics_learning.exe 70
       - name: Deploy
         run: cmake --install build --config Release --prefix "${{ github.workspace }}/release"
       - name: Verify standalone macOS package
@@ -39,3 +45,4 @@ jobs:
       - run: cmake -S . -B build -DOPTICS_BUILD_GUI=OFF -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
+      - run: ./build/optics_learning 70

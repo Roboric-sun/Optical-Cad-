@@ -29,15 +29,17 @@ void applySolves(SequentialSystem& s) {
     };
     for (const auto& a : s.solves) {
         if (a.surface >= n || int(a.parameter) < 0 || int(a.parameter) > 1 ||
-            int(a.kind) < 0 || int(a.kind) > 2 || !std::isfinite(a.scale) ||
+            int(a.kind) < 0 || int(a.kind) > 3 || !std::isfinite(a.scale) ||
             !std::isfinite(a.offset) || !std::isfinite(a.value) || !std::isfinite(a.height))
             throw std::invalid_argument("Некорректная связь параметра");
         auto& rule = rules[node(a.surface, a.parameter)];
         if (rule) throw std::invalid_argument("Один параметр имеет несколько связей");
         rule = &a;
-        if (a.kind == SolveKind::Pickup && a.reference >= n)
+        if ((a.kind == SolveKind::Pickup || a.kind == SolveKind::CurvaturePickup) && a.reference >= n)
             throw std::invalid_argument("Поверхность-источник связи не существует");
-        if (a.kind != SolveKind::Pickup && a.parameter != SolveParameter::Thickness)
+        if (a.kind == SolveKind::CurvaturePickup && a.parameter != SolveParameter::Radius)
+            throw std::invalid_argument("Связь кривизны управляет только радиусом");
+        if ((a.kind == SolveKind::EdgeThickness || a.kind == SolveKind::OverallLength) && a.parameter != SolveParameter::Thickness)
             throw std::invalid_argument("Край и общая длина управляют только толщиной");
         if (a.kind == SolveKind::EdgeThickness) {
             if (a.surface + 1 >= n || a.reference != a.surface + 1 || a.value < 0 || a.height < 0)
@@ -68,6 +70,16 @@ void applySolves(SequentialSystem& s) {
             case SolveKind::Pickup:
                 result = a->scale * evaluate(node(a->reference, a->parameter)) + a->offset;
                 break;
+            case SolveKind::CurvaturePickup: {
+                const double radius = evaluate(node(a->reference, SolveParameter::Radius));
+                // Radius 0 encodes a plane; its curvature is exactly 0.
+                const double source = radius == 0 ? 0 : 1 / radius;
+                const double curvature = a->scale * source + a->offset;
+                if (!std::isfinite(source) || !std::isfinite(curvature))
+                    throw std::invalid_argument("Связь кривизны даёт нечисловое значение");
+                result = curvature == 0 ? 0 : 1 / curvature;
+                break;
+            }
             case SolveKind::EdgeThickness: {
                 evaluate(node(a->surface, SolveParameter::Radius));
                 evaluate(node(a->surface + 1, SolveParameter::Radius));
@@ -112,7 +124,7 @@ void reindexSolves(SequentialSystem& s, const std::vector<size_t>& map) {
     std::erase_if(rules, [&](const auto& a) { return a.surface < map.size() && map[a.surface] == SIZE_MAX; });
     for (auto& a : rules) {
         a.surface = mapped(a.surface);
-        if (a.kind == SolveKind::Pickup || a.kind == SolveKind::EdgeThickness)
+        if (a.kind == SolveKind::Pickup || a.kind == SolveKind::CurvaturePickup || a.kind == SolveKind::EdgeThickness)
             a.reference = mapped(a.reference);
         if (a.kind == SolveKind::OverallLength) {
             a.first = mapped(a.first);

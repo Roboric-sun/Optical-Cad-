@@ -9,11 +9,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTextBrowser>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
@@ -196,6 +198,83 @@ size_t solveGUIChecks(Window& w, const QString& dir) {
     });
     check(warning && w.project().system.solves.empty() && w.project().system.surfaces[0].radius == 60,
           "A stale solve editor cannot overwrite geometry changed while its dialog was open");
+    w.setProject(Project{});
+    edit(1, 3, [&](SolveEditor* d) {
+        auto* type = d->findChild<QComboBox*>("solveType");
+        const int index = type->findData(int(SolveKind::CurvaturePickup));
+        check(index >= 0, "Radius dialog offers curvature pickup separately from radius pickup");
+        type->setCurrentIndex(index);
+        d->findChild<QComboBox*>("solveReference")->setCurrentIndex(0);
+        d->findChild<QDoubleSpinBox*>("solveScale")->setValue(-2);
+        d->findChild<QDoubleSpinBox*>("solveOffset")->setValue(.01);
+        bool unitLabel = false;
+        for (auto* label : d->findChildren<QLabel*>())
+            unitLabel |= label->text() == "Смещение кривизны, 1/мм";
+        check(unitLabel, "Curvature offset displays reciprocal millimetres");
+        if (!dir.isEmpty()) d->grab().save(dir + "/curvature_pickup.png");
+        accept(d);
+    });
+    close(w.project().system.surfaces[1].radius, -100. / 3, "Curvature dialog calculates the expected radius");
+    check(!(table->item(2,3)->flags() & Qt::ItemIsEditable) && table->item(2,3)->toolTip().contains("1/мм"),
+          "Dependent radius is protected and its tooltip states curvature units");
+    const auto curvatureBytes = serializeProject(w.project());
+    check(QJsonDocument::fromJson(curvatureBytes).object()["version"] == 3, "Curvature metadata requires project format 3");
+    check(serializeProject(deserializeProject(curvatureBytes)) == curvatureBytes,
+          "Curvature metadata and scalar geometry survive a roundtrip");
+    auto downgraded = QJsonDocument::fromJson(curvatureBytes).object();
+    downgraded["version"] = 2;
+    rejected = false;
+    try { deserializeProject(QJsonDocument(downgraded).toJson()); } catch (const std::exception&) { rejected = true; }
+    check(rejected, "Curvature solves cannot be hidden in an older format");
+    table->item(1,3)->setText("100");
+    QTest::qWait(150);
+    close(w.project().system.surfaces[1].radius, -100, "Changing source radius updates curvature pickup through the UI");
+    w.findChild<QAction*>("undoAction")->trigger();
+    check(QJsonDocument::fromJson(serializeProject(w.project())).object()["sequential"] ==
+          QJsonDocument::fromJson(curvatureBytes).object()["sequential"],
+          "Undo restores curvature coefficients and dependent radius");
+    w.findChild<QAction*>("redoAction")->trigger();
+    close(w.project().system.surfaces[1].radius, -100, "Redo recalculates curvature from the restored source");
+    edit(1, 3, [&](SolveEditor* d) {
+        check(d->findChild<QComboBox*>("solveType")->currentData().toInt() == int(SolveKind::CurvaturePickup),
+              "Reopening a curvature dialog selects its saved type");
+        close(d->findChild<QDoubleSpinBox*>("solveOffset")->value(), .01,
+              "Reopening restores curvature offset precision");
+        d->reject();
+    });
+    edit(1, 3, [&](SolveEditor* d) {
+        d->findChild<QComboBox*>("solveType")->setCurrentIndex(0);
+        accept(d);
+    });
+    check(w.project().system.solves.empty() && QJsonDocument::fromJson(serializeProject(w.project())).object()["version"] == 1,
+          "Removing the last curvature constraint restores a plain format 1 project");
+    close(w.project().system.surfaces[1].radius, -100, "Removing curvature constraint keeps the last resolved radius");
+    SolveEditor thicknessDialog(w.project(), 0, SolveParameter::Thickness, &w);
+    check(thicknessDialog.findChild<QComboBox*>("solveType")->findData(int(SolveKind::CurvaturePickup)) == -1,
+          "Thickness dialog does not offer a curvature solve");
+    const auto beforeHelp = serializeProject(w.project());
+    auto* helpAction = w.findChild<QAction*>("learningGuideAction");
+    check(helpAction != nullptr, "Help menu offers the beginner guide");
+    helpAction->trigger();
+    auto* guide = w.findChild<QDialog*>("learningGuide");
+    check(guide && guide->isVisible(), "Guide opens without a modal editor or external files");
+    auto* text = guide->findChild<QTextBrowser*>("learningText");
+    check(text && text->toPlainText().contains("first_lens.cpp") && text->toPlainText().contains("Qt Concurrent"),
+          "Deployed guide contains the actual source walkthrough and dependency explanations");
+    auto* search = guide->findChild<QLineEdit*>("learningSearch");
+    search->setText("std::vector");
+    guide->findChild<QPushButton*>("learningFindNext")->click();
+    check(text->textCursor().selectedText() == "std::vector", "Guide search selects a real occurrence");
+    search->setText("no-such-learning-text-1234");
+    QTest::keyClick(search, Qt::Key_Return);
+    check(guide->findChild<QLabel*>("learningSearchStatus")->text() == "Текст не найден",
+          "Guide search reports missing text");
+    helpAction->trigger();
+    check(w.findChildren<QDialog*>("learningGuide").size() == 1, "Repeated help action reuses the existing guide");
+    if (!dir.isEmpty()) guide->grab().save(dir + "/learning_guide.png");
+    guide->close();
+    QTest::qWait(20);
+    check(serializeProject(w.project()) == beforeHelp, "Reading and searching guide never alters the project");
     w.setProject(original);
     return checks;
 }
