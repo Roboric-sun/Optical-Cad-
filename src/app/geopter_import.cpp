@@ -51,15 +51,26 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     auto x = field["X"].toArray(), y = field["Y"].toArray(), fw = field["Weight"].toArray();
     if (x.empty() || x.size() > 50 || x.size() != y.size() || x.size() != fw.size())
         throw std::invalid_argument("Geopter: inconsistent fields");
-    for (auto key : {"VUX", "VLX", "VUY", "VLY"})
-        for (auto v : field[key].toArray())
-            if (v.toDouble() != 0)
-                throw std::invalid_argument(
-                    "Geopter: nonzero vignetting factors are not supported");
+    std::array<QJsonArray, 4> vignette;
+    const char* names[] = {"VUX", "VLX", "VUY", "VLY"};
+    for (size_t j = 0; j < 4; ++j)
+        if (field.contains(names[j])) {
+            if (!field[names[j]].isArray() || field[names[j]].toArray().size() != x.size())
+                throw std::invalid_argument(std::string("Geopter: inconsistent vignetting ") + names[j]);
+            vignette[j] = field[names[j]].toArray();
+            for (auto v : vignette[j])
+                if (!v.isDouble() || !std::isfinite(v.toDouble()) || v.toDouble() < 0 || v.toDouble() >= 1)
+                    throw std::invalid_argument(std::string("Geopter: vignetting must be 0 <= V < 1: ") + names[j]);
+        }
     for (int i = 0; i < x.size(); ++i) {
         if (!x[i].isDouble() || !y[i].isDouble() || !fw[i].isDouble())
             throw std::invalid_argument("Geopter: nonnumeric field");
-        s.fields.push_back({x[i].toDouble(), y[i].toDouble(), fw[i].toDouble()});
+        Field f{x[i].toDouble(), y[i].toDouble(), fw[i].toDouble()};
+        f.vux = vignette[0].empty() ? 0 : vignette[0][i].toDouble();
+        f.vlx = vignette[1].empty() ? 0 : vignette[1][i].toDouble();
+        f.vuy = vignette[2].empty() ? 0 : vignette[2][i].toDouble();
+        f.vly = vignette[3].empty() ? 0 : vignette[3][i].toDouble();
+        s.fields.push_back(f);
     }
     auto wavelengths = wave["Value"].toArray(), weights = wave["Weight"].toArray();
     if (wavelengths.empty() || wavelengths.size() > 20 || wavelengths.size() != weights.size())
@@ -159,7 +170,8 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
         s.pupilDiameter =
             std::abs(paraxial(s, p.catalog, s.wavelengths[s.primary].um).efl) / s.pupilDiameter;
     auto vertices = s.vertices();
-    std::vector<double> inferred(s.surfaces.size(), s.pupilDiameter / 2);
+    // Entrance pupil radius is not the clear radius of each internal surface.
+    std::vector<double> inferred(s.surfaces.size(), 0);
     for (auto f : s.fields)
         for (auto w : s.wavelengths)
             for (int j = 0; j < 17; ++j) {
@@ -172,8 +184,15 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
                         inferred[i], std::hypot(result.points[i + 1].x, result.points[i + 1].y));
             }
     for (size_t i = 0; i < s.surfaces.size(); ++i)
-        if (!explicitAperture[i])
-            s.surfaces[i].semiDiameter = inferred[i] * 1.03;
+        if (!explicitAperture[i]) {
+            if (!std::isfinite(inferred[i]) || inferred[i] <= 0)
+                throw std::invalid_argument("Geopter: no sampled ray reaches surface " + std::to_string(i + 1));
+            auto& surface = s.surfaces[i];
+            surface.semiDiameter = inferred[i] * 1.03;
+            if (surface.radius != 0 && surface.conic > -1)
+                surface.semiDiameter = std::min(surface.semiDiameter,
+                    std::nextafter(std::abs(surface.radius) / std::sqrt(1 + surface.conic), 0.));
+        }
     auto errors = s.validate(p.catalog);
     if (!errors.empty())
         throw std::invalid_argument(errors.front());

@@ -33,6 +33,7 @@ size_t improvementChecks(Window&, const QString&);
 size_t comboChecks(Window&, const QString&);
 size_t solveGUIChecks(Window&, const QString&);
 size_t marginalGUIChecks(Window&, const QString&);
+size_t fieldGUIChecks(Window&, const QString&);
 static void check(bool b, const char* text) {
     ++checks;
     if (!b)
@@ -379,6 +380,7 @@ int main(int argc, char** argv) {
         checks += int(comboChecks(w, dir));
         checks += int(solveGUIChecks(w, dir));
         checks += int(marginalGUIChecks(w, dir));
+        checks += int(fieldGUIChecks(w, dir));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

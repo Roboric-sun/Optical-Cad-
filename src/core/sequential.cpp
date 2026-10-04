@@ -60,7 +60,7 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
         out.push_back("Сетка зрачка должна быть 3…65");
     for (auto f : fields)
         if (!finite({f.x, f.y, f.weight}) || std::abs(f.x) > 80 || std::abs(f.y) > 80 ||
-            f.weight <= 0)
+            f.weight <= 0 || !validVignetting(f))
             out.push_back("Некорректное поле зрения");
     for (auto w : wavelengths)
         if (!std::isfinite(w.um) || w.um < 0.2 || w.um > 5 || !std::isfinite(w.weight) ||
@@ -274,6 +274,9 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
 }
 Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, double px, double py) {
     if (!s.solves.empty()) return pupilRay(resolvedSystem(s, c), c, f, w, px, py);
+    const auto pupil = vignettedPupil(f, px, py);
+    px = pupil.x;
+    py = pupil.y;
     auto vertices = s.vertices();
     double start = s.objectDistance > 0 ? -s.objectDistance : -std::max(30.0, s.pupilDiameter * 2);
     Vec3 direction = Vec3{tan(f.x * deg), tan(f.y * deg), 1}.unit();

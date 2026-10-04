@@ -7,6 +7,7 @@ using namespace optics;
 size_t optimizationChecks();
 size_t solveChecks();
 size_t marginalChecks();
+size_t fieldChecks();
 static size_t count = 0;
 static void check(bool condition, const char* name) {
     ++count;
@@ -361,6 +362,7 @@ int main() {
         count += optimizationChecks();
         count += solveChecks();
         count += marginalChecks();
+        count += fieldChecks();
         std::cout << count << " physical checks passed\n";
         return 0;
     } catch (const std::exception& e) {

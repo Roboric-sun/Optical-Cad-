@@ -35,7 +35,13 @@ struct Surface {
 };
 struct Field {
     double x = 0, y = 0, weight = 1;
+    double vux = 0, vlx = 0, vuy = 0, vly = 0; // shrink each signed pupil half, [0,1)
 };
+bool validVignetting(const Field&);
+bool hasVignetting(const Field&);
+Vec3 vignettedPupil(const Field&, double x, double y);
+// Physical normalized pupil -> sampling coordinates; outside the mapped disk returns nullopt.
+std::optional<Vec3> nominalPupil(const Field&, double x, double y);
 struct Wavelength {
     double um = 0.5875618, weight = 1;
 };

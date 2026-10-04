@@ -17,3 +17,6 @@
 
 
 Версия 0.7: численные данные `examples/geopter/kingslake_doublet.json` взяты неизменёнными из [Geopter 0edfbf52, Kingslake doublet](https://github.com/heterophyllus/Geopter/blob/0edfbf52fcf0e3fc660e5ae33c354fd7a6be80d7/example/book/kingslake_doublet.json); источник и GPL-3.0 указаны рядом с файлом. Реализация решения высоты луча и независимый аналитический скрипт написаны здесь; расчётный код Geopter не включён. Точность на этом примере относится к нашей модели Коши nd:Vd, а не к неиспытанной численной эквивалентности Geopter. Отсутствие solves в его JSON установлено по методу `SaveToFile` в зафиксированной версии.
+
+
+Версия 0.8: `examples/geopter/dbgauss.json` — неизменённые численные данные [Geopter 0edfbf52, Double Gauss](https://github.com/heterophyllus/Geopter/blob/0edfbf52fcf0e3fc660e5ae33c354fd7a6be80d7/example/dbgauss.json). Порядок и смысл VUX/VLX/VUY/VLY сверены с `spec/field.h` и `spec/field.cpp` этой версии. Прямое/обратное преобразования и редактор реализованы здесь; программный код Geopter не включён. Независимая круговая MTF подтверждает работу физической FFT-сетки уменьшенного зрачка.

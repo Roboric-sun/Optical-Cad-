@@ -83,8 +83,12 @@ QByteArray serializeProject(const Project& p) {
                                     {"reflectivity", s.reflectivity},
                                     {"decenter", vector(s.decenter)},
                                     {"tilt", vector(s.tilt)}});
-    for (auto f : p.system.fields)
-        fields.append(QJsonArray{f.x, f.y, f.weight});
+    for (auto f : p.system.fields) {
+        QJsonArray row{f.x, f.y, f.weight};
+        if (hasVignetting(f))
+            for (double v : {f.vux, f.vlx, f.vuy, f.vly}) row.append(v);
+        fields.append(row);
+    }
     for (auto w : p.system.wavelengths)
         waves.append(QJsonArray{w.um, w.weight});
     for (auto& o : p.scene.objects)
@@ -152,8 +156,9 @@ QByteArray serializeProject(const Project& p) {
     const bool marginal = std::any_of(s.solves.begin(), s.solves.end(), [](const auto& a) {
         return a.kind == SolveKind::MarginalHeight;
     });
+    const bool vignetting = std::any_of(s.fields.begin(), s.fields.end(), hasVignetting);
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
+                                     {"version", vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -184,7 +189,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -244,7 +249,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         for (auto val : seq["solves"].toArray()) {
             auto j = val.toObject();
             s.solves.push_back({SolveParameter(integer(j, "parameter", 1)),
-                integer(j, "surface", 499), SolveKind(integer(j, "kind", root["version"] == 4 ? 4 : root["version"] == 3 ? 3 : 2)),
+                integer(j, "surface", 499), SolveKind(integer(j, "kind", root["version"].toInt() >= 4 ? 4 : root["version"] == 3 ? 3 : 2)),
                 integer(j, "reference", 500), number(j, "scale"), number(j, "offset"),
                 number(j, "value"), number(j, "height"), integer(j, "first", 499),
                 integer(j, "last", 500)});
@@ -259,9 +264,19 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             }
         }
     }
+    if (!seq["fields"].isArray() || seq["fields"].toArray().size() > 50)
+        throw std::invalid_argument("Invalid fields table");
     for (auto val : seq["fields"].toArray()) {
-        auto v = readVector(val);
-        s.fields.push_back({v.x, v.y, v.z});
+        auto row = val.toArray();
+        if (row.size() != 3 && !(root["version"] == 5 && row.size() == 7))
+            throw std::invalid_argument("Invalid field / vignetting record");
+        for (auto v : row) if (!v.isDouble()) throw std::invalid_argument("Invalid field component");
+        Field f{row[0].toDouble(), row[1].toDouble(), row[2].toDouble()};
+        if (row.size() == 7) {
+            f.vux = row[3].toDouble(); f.vlx = row[4].toDouble();
+            f.vuy = row[5].toDouble(); f.vly = row[6].toDouble();
+        }
+        s.fields.push_back(f);
     }
     for (auto val : seq["wavelengths"].toArray()) {
         auto a = val.toArray();

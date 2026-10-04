@@ -54,7 +54,7 @@ def verify(bundle: Path) -> None:
             [str(bundle / "Contents/MacOS/optical_cad"), "--write-examples", output],
             env=environment, check=True, timeout=60,
         )
-        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus"):
+        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet"):
             project = json.loads((Path(output) / f"{name}.optcad").read_text())
             if project["format"] != "optical-cad" or not project["sequential"]["surfaces"]:
                 raise RuntimeError(f"Invalid generated example: {name}")
@@ -72,6 +72,11 @@ def verify(bundle: Path) -> None:
                 or project["sequential"]["solves"][0]["kind"] != 4
             ):
                 raise RuntimeError("Ray-height example is incomplete")
+            if name == "vignetted_singlet" and (
+                project["version"] != 5 or len(project["sequential"]["fields"][1]) != 7
+                or project["sequential"]["fields"][1][5:] != [.2, .25]
+            ):
+                raise RuntimeError("Vignetting example is incomplete")
     # Validate companion files in the full ZIP too, not just the executable bundle.
     with (bundle / "Contents/Info.plist").open("rb") as plist:
         version = plistlib.load(plist)["CFBundleVersion"]
@@ -82,11 +87,12 @@ def verify(bundle: Path) -> None:
             prefix = names[0].split("/")[0] + "/"
             required = ["docs/ROADMAP_RU.md", "docs/BENCHMARKS_RU.md",
                         "scripts/reference_doublet.py", "examples/marginal_focus.optcad",
-                        "examples/geopter/kingslake_doublet.json"]
+                        "examples/geopter/kingslake_doublet.json", "examples/geopter/dbgauss.json",
+                        "examples/vignetted_singlet.optcad", "docs/FIELDS_RU.md"]
             for relative in required:
                 if prefix + relative not in names:
                     raise RuntimeError(f"Missing companion file in {archive}: {relative}")
-    print(f"Package OK: {objects} Mach-O objects, local dependencies, six generated examples.")
+    print(f"Package OK: {objects} Mach-O objects, local dependencies, seven generated examples.")
 
 
 if __name__ == "__main__":

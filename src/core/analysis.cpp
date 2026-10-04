@@ -198,7 +198,10 @@ Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, in
             double px = (x - n / 2) * step, py = (y - n / 2) * step;
             if (px * px + py * py > 1)
                 continue;
-            auto sample = waveSample(s, c, f, px, py, cr, chief, r);
+            // FFT samples physical pupil positions, never a stretched nominal grid.
+            const auto nominal = nominalPupil(f, px, py);
+            if (!nominal) continue;
+            auto sample = waveSample(s, c, f, nominal->x, nominal->y, cr, chief, r);
             if (sample)
                 pupil[y * n + x] =
                     std::polar(sqrt(sample->power), 2 * pi * sample->opd / (w * 1e-3));

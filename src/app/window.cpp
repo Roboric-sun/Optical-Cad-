@@ -3,6 +3,7 @@
 #include "office.hpp"
 #include "optimization_editor.hpp"
 #include "solve_editor.hpp"
+#include "field_editor.hpp"
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -155,7 +156,7 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.7",
+            this, "Optical CAD 0.8",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
@@ -969,7 +970,7 @@ void Window::buildRibbon() {
         g->large("editor", "Параметры\nсистемы", [this] { parameters(); }, "parametersButton");
         auto* col = g->column();
         g->small(col, "aperture", "Апертура", [this] { parameters(); });
-        g->small(col, "field", "Поля зрения", [this] { parameters(); });
+        g->small(col, "field", "Поля зрения", [this] { editFields(); }, "fieldsButton");
         g->small(col, "wave", "Длины волн", [this] { parameters(); });
         col = g->column();
         unavailable(g->small(col, "polarization", "Поляризация", {}), "расчёт поляризации");
@@ -2193,6 +2194,21 @@ void Window::autofocus() {
         error(e);
     }
 }
+void Window::editFields() {
+    const auto revision = revision_;
+    FieldEditor dialog(project_, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    if (revision != revision_) {
+        error(std::runtime_error("Проект изменился: откройте редактор полей заново")); return;
+    }
+    const auto& map = dialog.mapping();
+    const size_t next = size_t(field_) < map.size() ? map[size_t(field_)] : SIZE_MAX;
+    checkpoint();
+    project_ = dialog.project();
+    field_ = next == SIZE_MAX ? 0 : int(next);
+    changed();
+    recalculate();
+}
 void Window::parameters() {
     QDialog dialog(this);
     dialog.setWindowTitle("Параметры последовательной системы");
@@ -2216,10 +2232,13 @@ void Window::parameters() {
     auto* fields = new QTextEdit;
     fields->setFixedHeight(95);
     QString fs;
-    for (auto f : s.fields)
-        fs += QString("%1 %2 %3\n").arg(f.x).arg(f.y).arg(f.weight);
+    for (auto f : s.fields) {
+        fs += QString("%1 %2 %3").arg(f.x, 0, 'g', 17).arg(f.y, 0, 'g', 17).arg(f.weight, 0, 'g', 17);
+        if (hasVignetting(f)) fs += QString(" %1 %2 %3 %4").arg(f.vux, 0, 'g', 17).arg(f.vlx, 0, 'g', 17).arg(f.vuy, 0, 'g', 17).arg(f.vly, 0, 'g', 17);
+        fs += "\n";
+    }
     fields->setPlainText(fs);
-    form->addRow("Поля: X° Y° вес\nпо одному в строке", fields);
+    form->addRow("Поля: X° Y° вес\n[ VUX VLX VUY VLY ]", fields);
     auto* waves = new QTextEdit;
     waves->setFixedHeight(95);
     QString ws;
@@ -2251,7 +2270,15 @@ void Window::parameters() {
                 std::istringstream row(line);
                 if (!(row >> x >> y >> weight))
                     throw std::invalid_argument("Поля: в каждой строке нужны X Y вес");
-                candidate.fields.push_back({x, y, weight});
+                Field f{x, y, weight};
+                row >> std::ws;
+                if (!row.eof()) {
+                    if (!(row >> f.vux >> f.vlx >> f.vuy >> f.vly))
+                        throw std::invalid_argument("Виньетирование: после X Y веса нужны VUX VLX VUY VLY");
+                    row >> std::ws;
+                    if (!row.eof()) throw std::invalid_argument("Лишние значения в строке поля");
+                }
+                candidate.fields.push_back(f);
             }
             std::istringstream win(waves->toPlainText().toStdString());
             double w;
@@ -2832,6 +2859,12 @@ void Window::writeExamples(const QString& directory) {
     marginal.system.solves = {ray};
     applySolves(marginal.system, marginal.catalog);
     saveProject(directory + "/marginal_focus.optcad", marginal);
+    Project vignetted;
+    vignetted.system.name = "Линза — виньетирование полей";
+    vignetted.system.fields[1].vuy = .2; vignetted.system.fields[1].vly = .25;
+    vignetted.system.fields[2].vuy = .4; vignetted.system.fields[2].vly = .4;
+    optics::autofocus(vignetted.system, vignetted.catalog);
+    saveProject(directory + "/vignetted_singlet.optcad", vignetted);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

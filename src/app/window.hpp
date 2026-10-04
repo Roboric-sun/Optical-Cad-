@@ -97,6 +97,7 @@ class Window : public QMainWindow {
     void editObject(int, int);
     void editSource(int, int);
     void parameters();
+    void editFields();
     void calculationParameters();
     void catalog();
     void manualMaterial();
