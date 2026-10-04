@@ -6,14 +6,14 @@
 namespace optics {
 RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int samples) {
     if (!sys.solves.empty()) return rayFan(resolvedSystem(sys, cat), cat, field, samples);
-    if (samples < 3 || samples > 401 || !std::isfinite(field.x) || !std::isfinite(field.y) ||
-        std::abs(field.x) >= 89 || std::abs(field.y) >= 89)
+    if (samples < 3 || samples > 401 || !validField(sys, field))
         throw std::invalid_argument("Invalid ray-fan field or sample count");
     auto errors = sys.validate(cat);
     if (!errors.empty())
         throw std::invalid_argument(errors.front());
     RayFan out;
-    Vec3 radial{tan(field.x * deg), tan(field.y * deg), 0};
+    const auto angles = angularField(sys, cat, field);
+    Vec3 radial{tan(angles.x * deg), tan(angles.y * deg), 0};
     out.tangentialAxis = radial.norm() > 1e-12 ? radial.unit() : Vec3{0, 1, 0};
     out.sagittalAxis = {out.tangentialAxis.y, -out.tangentialAxis.x, 0};
     auto chief = trace(sys, cat, pupilRay(sys, cat, field, sys.wavelengths[sys.primary].um, 0, 0));
@@ -321,8 +321,9 @@ AnalysisCurve fieldCurvature(const SequentialSystem& s, const Catalog& c) {
     double base = s.vertices().back(), w = s.wavelengths[s.primary].um;
     for (auto f : s.fields) {
         out.x.push_back(std::hypot(f.x, f.y));
-        double norm = std::hypot(f.x, f.y), tx = norm > 1e-9 ? f.x / norm : 0,
-               ty = norm > 1e-9 ? f.y / norm : 1;
+        const auto angles = angularField(s, c, f);
+        double norm = std::hypot(angles.x, angles.y), tx = norm > 1e-9 ? angles.x / norm : 0,
+               ty = norm > 1e-9 ? angles.y / norm : 1;
         for (int plane = 0; plane < 2; ++plane) {
             double ax = plane ? -ty : tx, ay = plane ? tx : ty;
             auto a = trace(s, c, pupilRay(s, c, f, w, ax * .01, ay * .01), false),

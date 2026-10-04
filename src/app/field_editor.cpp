@@ -1,8 +1,12 @@
 #include "field_editor.hpp"
 #include <QDialogButtonBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -11,12 +15,28 @@
 #include <memory>
 
 using namespace optics;
+namespace {
+class FieldDistanceBox : public QDoubleSpinBox {
+    QString textFromValue(double value) const override { return locale().toString(value, 'g', 17); }
+};
+}
 FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(parent), result_(project) {
     setObjectName("fieldDialog");
     setWindowTitle("Поля зрения и виньетирование");
-    resize(820, 410);
+    resize(900, 500);
     auto* layout = new QVBoxLayout(this);
-    auto* info = new QLabel("X/Y — углы объекта в градусах. VUX/VLX — положительная/отрицательная сторона X зрачка; "
+    auto* form = new QFormLayout;
+    auto* type = new QComboBox; type->setObjectName("fieldTypeCombo");
+    type->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    type->setCurrentIndex(int(project.system.fieldType)); form->addRow("Определение поля", type);
+    auto* distance = new FieldDistanceBox; distance->setObjectName("fieldObjectDistance");
+    distance->setDecimals(12); distance->setRange(0, 1e8); distance->setValue(project.system.objectDistance);
+    const double initialDistance = distance->value();
+    form->addRow("Расстояние объекта, мм (0 = ∞)", distance); layout->addLayout(form);
+    auto* info = new QLabel("При смене типа координаты X/Y трактуются в новых единицах: задайте нужные значения. "
+                           "Высоте объекта требуется расстояние > 0. Высота изображения относится к гауссову сопряжению "
+                           "на первичной волне; реальные точки пятна могут отличаться. "
+                           "VUX/VLX — положительная/отрицательная сторона X зрачка; "
                            "VUY/VLY — стороны Y. Коэффициент 0 оставляет сторону целиком; 0,4 сжимает её до 60%. "
                            "Допустимо 0 ≤ V < 1. Главный луч остаётся в центре.");
     info->setWordWrap(true); layout->addWidget(info);
@@ -28,6 +48,12 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     layout->addWidget(table);
+    auto updateUnits = [=] {
+        const auto unit = QString::fromUtf8(fieldUnit(FieldType(type->currentIndex())));
+        table->horizontalHeaderItem(0)->setText("X, " + unit);
+        table->horizontalHeaderItem(1)->setText("Y, " + unit);
+    };
+    connect(type, &QComboBox::currentIndexChanged, this, updateUnits); updateUnits();
     // Identity is independent of editable coordinates and survives row movement.
     auto identities = std::make_shared<std::vector<size_t>>();
     auto append = [table, identities](Field f, size_t identity) {
@@ -53,6 +79,9 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
     auto* message = new QLabel;
     message->setObjectName("fieldMessage"); message->setWordWrap(true);
     message->setStyleSheet("color:#ac3030"); layout->addWidget(message);
+    connect(table, &QTableWidget::itemChanged, message, &QLabel::clear);
+    connect(type, &QComboBox::currentIndexChanged, message, &QLabel::clear);
+    connect(distance, &QDoubleSpinBox::valueChanged, message, &QLabel::clear);
     connect(add, &QPushButton::clicked, this, [=] {
         if (table->rowCount() >= 50) { message->setText("Допустимо не более 50 полей"); return; }
         append(Field{}, SIZE_MAX); message->clear();
@@ -84,6 +113,8 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
     connect(buttons, &QDialogButtonBox::accepted, this, [=, this] {
         try {
             auto candidate = project;
+            candidate.system.fieldType = FieldType(type->currentIndex());
+            candidate.system.objectDistance = distance->value() == initialDistance ? project.system.objectDistance : distance->value();
             candidate.system.fields.clear();
             std::vector<size_t> map(project.system.fields.size(), SIZE_MAX);
             for (int row = 0; row < table->rowCount(); ++row) {
@@ -96,8 +127,8 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
                         throw std::invalid_argument("В каждой ячейке нужно конечное число");
                 }
                 Field f{values[0], values[1], values[2], values[3], values[4], values[5], values[6]};
-                if (std::abs(f.x) > 80 || std::abs(f.y) > 80 || f.weight <= 0 || !validVignetting(f))
-                    throw std::invalid_argument("Поля: |X/Y| ≤ 80°, вес > 0, коэффициенты 0 ≤ V < 1");
+                if (!validField(candidate.system, f))
+                    throw std::invalid_argument("Поля: |угол| ≤ 80°, |высота| ≤ 1e8 мм, вес > 0, 0 ≤ V < 1; высота объекта требует расстояния > 0");
                 candidate.system.fields.push_back(f);
                 if ((*identities)[row] != SIZE_MAX) map.at((*identities)[row]) = size_t(row);
             }

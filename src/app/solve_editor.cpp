@@ -79,7 +79,7 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
     auto* field = new QComboBox;
     field->setObjectName("solveField");
     for (size_t i = 0; i < result_.fields.size(); ++i)
-        field->addItem(QString("%1 · X=%2°, Y=%3°").arg(i + 1).arg(result_.fields[i].x).arg(result_.fields[i].y));
+        field->addItem(QString("%1 · X=%2 %4, Y=%3 %4").arg(i + 1).arg(result_.fields[i].x).arg(result_.fields[i].y).arg(QString::fromUtf8(fieldUnit(result_.fieldType))));
     auto* wave = new QComboBox;
     wave->setObjectName("solveWavelength");
     wave->addItem("Следовать первичной волне", -1);

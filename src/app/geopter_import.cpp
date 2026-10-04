@@ -46,8 +46,10 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     if (pupilType != 0 && pupilType != 1)
         throw std::invalid_argument(
             "Geopter: only entrance pupil diameter and f-number are supported");
-    if (value(field, "Type") != 0)
-        throw std::invalid_argument("Geopter: only angular object fields supported");
+    const double fieldType = value(field, "Type");
+    if (fieldType < 0 || fieldType > 2 || std::floor(fieldType) != fieldType)
+        throw std::invalid_argument("Geopter: unsupported field type");
+    s.fieldType = FieldType(int(fieldType));
     auto x = field["X"].toArray(), y = field["Y"].toArray(), fw = field["Weight"].toArray();
     if (x.empty() || x.size() > 50 || x.size() != y.size() || x.size() != fw.size())
         throw std::invalid_argument("Geopter: inconsistent fields");

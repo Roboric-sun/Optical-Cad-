@@ -156,7 +156,7 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.8",
+            this, "Optical CAD 0.8.1",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
@@ -1497,7 +1497,7 @@ void Window::rebuildEditors() {
     editors_->tabBar()->setVisible(project_.mode != 0);
     fieldBox_->clear();
     for (auto field : s.fields)
-        fieldBox_->addItem(QString("%1° / %2°").arg(field.x).arg(field.y));
+        fieldBox_->addItem(QString("%1 %3 / %2 %3").arg(field.x).arg(field.y).arg(QString::fromUtf8(fieldUnit(s.fieldType))));
     field_ = std::clamp(field_, 0, int(s.fields.size()) - 1);
     fieldBox_->setCurrentIndex(field_);
     int detector = detectorBox_->currentIndex();
@@ -1584,7 +1584,7 @@ void Window::rebuildTree() {
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
         for (size_t i = 0; i < s.fields.size(); ++i) {
             auto* field =
-                node(rays, QString("Пучок поля %1°").arg(s.fields[i].y), "13 лучей", "fan");
+                node(rays, QString("Пучок поля %1 %2").arg(s.fields[i].y).arg(QString::fromUtf8(fieldUnit(s.fieldType))), "13 лучей", "fan");
             node(field, "Тип сетки", "меридиональный срез", "grid");
             node(field, "Число лучей", "13", "rays");
             node(field, "Цвет отображения",
@@ -1653,7 +1653,7 @@ void Window::rebuildTree() {
             }
         }
     }
-    auto* analysis = node(root, "Анализ", QString::number(views_->count() - 1) + " окна");
+    auto* analysis = node(root, "Анализ");
     for (int i = 0; i < views_->count(); ++i)
         if (auto* plot = dynamic_cast<PlotWidget*>(views_->widget(i))) {
             auto* item = node(analysis, viewName(plot->view), {},
@@ -1662,6 +1662,7 @@ void Window::rebuildTree() {
                                                            : "mtf");
             item->setData(0, Qt::UserRole + 4, int(plot->view));
         }
+    analysis->setText(1, QString::number(analysis->childCount()) + " окна");
     node(root, "Материалы", QString::number(project_.catalog.materials.size()) + " записей",
          "folder");
     tree_->expandToDepth(1);
@@ -1722,6 +1723,7 @@ void Window::addView(View v) {
     });
     plot->officePresentation = true;
     views_->setCurrentIndex(i);
+    if (uiReady_) rebuildTree();
 }
 void Window::updatePlots() {
     if (results_) {
@@ -2238,7 +2240,10 @@ void Window::parameters() {
         fs += "\n";
     }
     fields->setPlainText(fs);
-    form->addRow("Поля: X° Y° вес\n[ VUX VLX VUY VLY ]", fields);
+    auto* fieldType = new QComboBox; fieldType->setObjectName("parameterFieldType");
+    fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    fieldType->setCurrentIndex(int(s.fieldType)); form->addRow("Определение поля", fieldType);
+    form->addRow("Поля: X Y вес (единицы выбранного типа)\n[ VUX VLX VUY VLY ]", fields);
     auto* waves = new QTextEdit;
     waves->setFixedHeight(95);
     QString ws;
@@ -2256,6 +2261,7 @@ void Window::parameters() {
             if (revision != revision_) throw std::invalid_argument("Проект изменился: откройте параметры заново");
             auto candidate = s;
             candidate.name = name->text().toStdString();
+            candidate.fieldType = FieldType(fieldType->currentIndex());
             candidate.objectDistance = distance->value();
             candidate.defocus = defocus->value();
             candidate.pupilGrid = grid->value() | 1;
@@ -2689,7 +2695,8 @@ void Window::exportCSV() {
                          .arg(d.diffraction.psf[y * n + x], 0, 'g', 14));
     } else if (int(plot->view) >= 10 && int(plot->view) <= 13) {
         auto& curve = d.curves[int(plot->view) - 10];
-        QString header = "x";
+        QString header = plot->view == View::FieldCurvature ?
+            (project_.system.fieldType == FieldType::Angle ? "field_deg" : "field_mm") : "x";
         for (size_t j = 0; j < curve.y.size(); ++j)
             header += ",series_" + QString::number(j + 1);
         line(header);
@@ -2700,7 +2707,7 @@ void Window::exportCSV() {
             line(row);
         }
     } else if (plot->view == View::RMS) {
-        line("field,x_deg,y_deg,RMS_um,valid_rays,launched_rays");
+        line(project_.system.fieldType == FieldType::Angle ? "field,x_deg,y_deg,RMS_um,valid_rays,launched_rays" : "field,x_mm,y_mm,RMS_um,valid_rays,launched_rays");
         for (size_t i = 0; i < d.spots.size(); ++i)
             line(QString("%1,%2,%3,%4,%5,%6")
                      .arg(i + 1)
@@ -2865,6 +2872,18 @@ void Window::writeExamples(const QString& directory) {
     vignetted.system.fields[2].vuy = .4; vignetted.system.fields[2].vly = .4;
     optics::autofocus(vignetted.system, vignetted.catalog);
     saveProject(directory + "/vignetted_singlet.optcad", vignetted);
+    Project finite;
+    finite.system.name = "Линза — конечный объект по высоте";
+    finite.system.fieldType = FieldType::ObjectHeight; finite.system.objectDistance = 200;
+    finite.system.fields = {{0, 0, 1}, {0, -5, 1}, {0, -10, 1}};
+    optics::autofocus(finite.system, finite.catalog);
+    saveProject(directory + "/object_height.optcad", finite);
+    Project image;
+    image.system.name = "Линза — параксиальная высота изображения";
+    image.system.fieldType = FieldType::ParaxialImageHeight;
+    image.system.fields = {{0, 0, 1}, {0, 3, 1}, {0, 5, 1}};
+    optics::autofocus(image.system, image.catalog);
+    saveProject(directory + "/image_height.optcad", image);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);
@@ -2899,7 +2918,7 @@ void Window::rayReport() {
     auto* py = spin(.5, -1, 1);
     auto* field = new QComboBox;
     for (auto f : project_.system.fields)
-        field->addItem(QString("%1° / %2°").arg(f.x).arg(f.y));
+        field->addItem(QString("%1 %3 / %2 %3").arg(f.x).arg(f.y).arg(QString::fromUtf8(fieldUnit(project_.system.fieldType))));
     auto* wave = new QComboBox;
     for (auto w : project_.system.wavelengths)
         wave->addItem(num(w.um) + " мкм");
@@ -3003,7 +3022,7 @@ void Window::prescription() {
     text += "\nВолны, мкм (вес):\n";
     for (auto w : s.wavelengths)
         text += num(w.um) + " (" + num(w.weight) + ")\n";
-    text += "\nПоля X°, Y° (вес):\n";
+    text += "\nПоля X/Y, " + QString::fromUtf8(fieldUnit(s.fieldType)) + " (вес); тип " + QString::number(int(s.fieldType)) + ":\n";
     for (auto f : s.fields)
         text += num(f.x) + ", " + num(f.y) + " (" + num(f.weight) + ")\n";
     reportDialog(this, "Описание системы", text);

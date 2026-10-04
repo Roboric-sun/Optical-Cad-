@@ -406,7 +406,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                 p.drawLine(QPointF(legend.left() + 10, y), QPointF(legend.left() + 30, y));
                 p.setPen(QColor("#7a8b9a"));
                 p.drawText(QRectF(legend.left() + 38, y - 7, 100, 14),
-                           QString::number(sys.fields[i].y, 'g', 3) + "°");
+                           QString::number(sys.fields[i].y, 'g', 3) + " " + QString::fromUtf8(fieldUnit(sys.fieldType)));
             }
             p.setPen(QColor("#d75351"));
             p.drawText(map(verts[sys.stop], sys.surfaces[sys.stop].semiDiameter + 5) +
@@ -768,7 +768,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             xl = "Нормированная высота зрачка";
             yl = "Продольная аберрация, мм · цвет по длине волны";
         } else if (view == View::FieldCurvature) {
-            xl = "Угол поля, °";
+            xl = sys.fieldType == FieldType::Angle ? "Угол поля, °" : sys.fieldType == FieldType::ObjectHeight ? "Высота объекта, мм" : "Параксиальная высота изображения, мм";
             yl = "Положение фокуса относительно изображения, мм · T / S";
         } else if (view == View::ChromaticFocus) {
             xl = "Длина волны, нм";

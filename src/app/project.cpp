@@ -156,9 +156,10 @@ QByteArray serializeProject(const Project& p) {
     const bool marginal = std::any_of(s.solves.begin(), s.solves.end(), [](const auto& a) {
         return a.kind == SolveKind::MarginalHeight;
     });
+    if (s.fieldType != FieldType::Angle) seq["fieldType"] = int(s.fieldType);
     const bool vignetting = std::any_of(s.fields.begin(), s.fields.end(), hasVignetting);
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
+                                     {"version", s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -189,7 +190,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -213,6 +214,10 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     }
     auto seq = root["sequential"].toObject();
     auto& s = p.system;
+    if (seq.contains("fieldType")) {
+        if (root["version"] != 6) throw std::invalid_argument("Field type metadata requires format 6");
+        s.fieldType = FieldType(integer(seq, "fieldType", 2));
+    } else if (root["version"] == 6) throw std::invalid_argument("Format 6 requires fieldType");
     s.name = string(seq, "name");
     s.surfaces.clear();
     s.fields.clear();
@@ -268,7 +273,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         throw std::invalid_argument("Invalid fields table");
     for (auto val : seq["fields"].toArray()) {
         auto row = val.toArray();
-        if (row.size() != 3 && !(root["version"] == 5 && row.size() == 7))
+        if (row.size() != 3 && !(root["version"].toInt() >= 5 && row.size() == 7))
             throw std::invalid_argument("Invalid field / vignetting record");
         for (auto v : row) if (!v.isDouble()) throw std::invalid_argument("Invalid field component");
         Field f{row[0].toDouble(), row[1].toDouble(), row[2].toDouble()};

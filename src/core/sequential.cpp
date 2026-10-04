@@ -58,10 +58,13 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
         out.push_back("Некорректные поля или длины волн");
     if (pupilGrid < 3 || pupilGrid > 65)
         out.push_back("Сетка зрачка должна быть 3…65");
-    for (auto f : fields)
-        if (!finite({f.x, f.y, f.weight}) || std::abs(f.x) > 80 || std::abs(f.y) > 80 ||
-            f.weight <= 0 || !validVignetting(f))
-            out.push_back("Некорректное поле зрения");
+    for (auto f : fields) {
+        if (!validField(*this, f)) out.push_back("Некорректное поле зрения / тип поля / расстояние объекта");
+        else if (fieldType != FieldType::Angle) {
+            try { angularField(*this, catalog, f); }
+            catch (const std::exception& e) { out.push_back(e.what()); }
+        }
+    }
     for (auto w : wavelengths)
         if (!std::isfinite(w.um) || w.um < 0.2 || w.um > 5 || !std::isfinite(w.weight) ||
             w.weight <= 0)
@@ -274,6 +277,7 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
 }
 Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, double px, double py) {
     if (!s.solves.empty()) return pupilRay(resolvedSystem(s, c), c, f, w, px, py);
+    f = angularField(s, c, f);
     const auto pupil = vignettedPupil(f, px, py);
     px = pupil.x;
     py = pupil.y;

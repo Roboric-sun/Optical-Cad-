@@ -68,7 +68,9 @@ static void applySolvesImpl(SequentialSystem& s, const Catalog* catalog) {
                 throw std::invalid_argument("Решение по лучу требует STOP до управляемого промежутка");
             const auto f = s.fields[a.field];
             const auto w = s.wavelengths[wave];
-            if (!finite({f.x, f.y, f.weight}) || f.x != 0 || std::abs(f.y) > 80 || f.weight <= 0 ||
+            if (s.fieldType == FieldType::ParaxialImageHeight)
+                throw std::invalid_argument("Решение по высоте луча требует углового поля или высоты объекта: высота изображения зависит от изменяемой схемы");
+            if (!validField(s, f) || f.x != 0 ||
                 !std::isfinite(w.um) || w.um < .2 || w.um > 5 ||
                 !std::isfinite(s.pupilDiameter) || s.pupilDiameter <= 0 ||
                 !std::isfinite(s.objectDistance) || s.objectDistance < 0 || !std::isfinite(s.defocus))

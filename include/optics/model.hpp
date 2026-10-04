@@ -37,6 +37,8 @@ struct Field {
     double x = 0, y = 0, weight = 1;
     double vux = 0, vlx = 0, vuy = 0, vly = 0; // shrink each signed pupil half, [0,1)
 };
+enum class FieldType { Angle, ObjectHeight, ParaxialImageHeight };
+const char* fieldUnit(FieldType);
 bool validVignetting(const Field&);
 bool hasVignetting(const Field&);
 Vec3 vignettedPupil(const Field&, double x, double y);
@@ -68,6 +70,7 @@ struct SequentialSystem {
     double pupilDiameter = 10, objectDistance = 0, defocus = 0;
     int pupilGrid = 17;
     std::vector<ParameterSolve> solves;
+    FieldType fieldType = FieldType::Angle;
     double imageZ() const;
     double imageZ(const Catalog&) const;
     std::vector<double> vertices() const;
@@ -75,6 +78,10 @@ struct SequentialSystem {
     std::vector<std::string> validate(const Catalog&) const;
     static SequentialSystem demo();
 };
+bool validField(const SequentialSystem&, const Field&);
+// Convert to the legacy angle convention using the primary-wave Gaussian conjugate.
+// Heights remain fixed across wavelengths and when the image is defocused.
+Field angularField(const SequentialSystem&, const Catalog&, Field);
 bool isSolved(const SequentialSystem&, SolveParameter, size_t surface);
 bool imageThicknessLinked(const SequentialSystem&);
 // Transactional: failure leaves every cached scalar and constraint unchanged.

@@ -218,7 +218,7 @@ void OptimizationEditor::appendOperand(MeritOperand o) {
     field->addItem("Все поля");
     for (size_t i = 0; i < project_.system.fields.size(); ++i) {
         auto f = project_.system.fields[i];
-        field->addItem(QString("%1: %2°, %3°").arg(i + 1).arg(f.x).arg(f.y));
+        field->addItem(QString("%1: %2 %4, %3 %4").arg(i + 1).arg(f.x).arg(f.y).arg(QString::fromUtf8(fieldUnit(project_.system.fieldType))));
     }
     field->setCurrentIndex(o.field + 1);
     auto enableField = [kind, field] {
