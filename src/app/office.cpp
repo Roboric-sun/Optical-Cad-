@@ -357,7 +357,13 @@ QStatusBar { background: #2d70ae; color: white; padding: 1px 6px; }
 QStatusBar QLabel { color: white; font-size: 11px; }
 QPushButton { background: #fafcfe; border: 1px solid #c9d9e6; border-radius: 2px; padding: 5px 8px; color: #284d6e; }
 QPushButton:hover { background: #dfedf9; border-color: #70a5d2; }
-QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox { padding: 2px; border: 1px solid #bed0df; background: white; }
+QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox { padding: 2px; border: 1px solid #bed0df; background: white; color: #243e58; selection-background-color: #cce2f4; selection-color: #1e405d; }
+/* Use the list delegate: the menu delegate draws the combo's white background
+   over its selected row, hiding the highlighted label. */
+QComboBox { combobox-popup: 0; }
+QComboBox QAbstractItemView { background: white; color: #243e58; border: 1px solid #bed0df; selection-background-color: #cce2f4; selection-color: #1e405d; outline: 0; }
+QComboBox QAbstractItemView::item { min-height: 20px; padding: 2px 6px; }
+QComboBox QAbstractItemView::item:selected { background: #cce2f4; color: #1e405d; }
 QScrollBar:horizontal { height: 9px; background: #f2f6fa; }
 QScrollBar:vertical { width: 9px; background: #f2f6fa; }
 QScrollBar::handle { background: #b9cbdc; border-radius: 3px; min-width: 25px; min-height: 25px; }
