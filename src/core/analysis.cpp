@@ -5,6 +5,7 @@
 
 namespace optics {
 RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int samples) {
+    if (!sys.solves.empty()) return rayFan(resolvedSystem(sys), cat, field, samples);
     if (samples < 3 || samples > 401 || !std::isfinite(field.x) || !std::isfinite(field.y) ||
         std::abs(field.x) >= 89 || std::abs(field.y) >= 89)
         throw std::invalid_argument("Invalid ray-fan field or sample count");
@@ -43,6 +44,7 @@ RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int 
     return out;
 }
 Spot spot(const SequentialSystem& sys, const Catalog& cat, Field field, int grid) {
+    if (!sys.solves.empty()) return spot(resolvedSystem(sys), cat, field, grid);
     if (grid == 0)
         grid = sys.pupilGrid;
     if (grid < 3 || grid > 65)
@@ -97,6 +99,7 @@ static std::optional<WaveSample> waveSample(const SequentialSystem& s, const Cat
     return WaveSample{px, py, opd, t.power};
 }
 Wavefront wavefront(const SequentialSystem& s, const Catalog& c, Field f, int grid) {
+    if (!s.solves.empty()) return wavefront(resolvedSystem(s), c, f, grid);
     Wavefront out;
     out.wavelength = s.wavelengths.at(s.primary).um;
     auto cr = pupilRay(s, c, f, out.wavelength, 0, 0);
@@ -174,6 +177,7 @@ static void fft2(std::vector<Complex>& a, int n) {
     }
 }
 Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, int n) {
+    if (!s.solves.empty()) return diffraction(resolvedSystem(s), c, f, n);
     if (n < 32 || n > 256 || (n & (n - 1)))
         throw std::invalid_argument("FFT size must be power of 2, 32–256");
     Diffraction out;
@@ -232,6 +236,7 @@ OptimizationResult optimizeRadii(SequentialSystem& s, const Catalog& c, size_t i
         if (!candidate.validate(c).empty())
             return 1e9;
         try {
+            applySolves(candidate);
             autofocus(candidate, c);
             double val = 0, weights = 0;
             for (auto f : candidate.fields) {
@@ -259,7 +264,8 @@ OptimizationResult optimizeRadii(SequentialSystem& s, const Catalog& c, size_t i
     for (size_t pass = 0; pass < iterations; ++pass) {
         bool changed = false;
         for (size_t i = 0; i < s.surfaces.size(); ++i) {
-            if (s.surfaces[i].radius == 0 || s.surfaces[i].kind != SurfaceKind::Refract)
+            if (s.surfaces[i].radius == 0 || s.surfaces[i].kind != SurfaceKind::Refract ||
+                isSolved(s, SolveParameter::Radius, i))
                 continue;
             auto original = s;
             auto best = s;
@@ -288,6 +294,7 @@ OptimizationResult optimizeRadii(SequentialSystem& s, const Catalog& c, size_t i
     return out;
 }
 AnalysisCurve longitudinalAberration(const SequentialSystem& s, const Catalog& c, int samples) {
+    if (!s.solves.empty()) return longitudinalAberration(resolvedSystem(s), c, samples);
     AnalysisCurve out;
     out.y.resize(s.wavelengths.size());
     for (int i = 0; i < samples; ++i) {
@@ -305,6 +312,7 @@ AnalysisCurve longitudinalAberration(const SequentialSystem& s, const Catalog& c
     return out;
 }
 AnalysisCurve fieldCurvature(const SequentialSystem& s, const Catalog& c) {
+    if (!s.solves.empty()) return fieldCurvature(resolvedSystem(s), c);
     AnalysisCurve out;
     out.y.resize(2);
     double base = s.vertices().back(), w = s.wavelengths[s.primary].um;
@@ -334,6 +342,7 @@ AnalysisCurve fieldCurvature(const SequentialSystem& s, const Catalog& c) {
     return out;
 }
 AnalysisCurve chromaticFocus(const SequentialSystem& s, const Catalog& c, int samples) {
+    if (!s.solves.empty()) return chromaticFocus(resolvedSystem(s), c, samples);
     AnalysisCurve out;
     out.y.resize(1);
     double reference = paraxial(s, c, s.wavelengths[s.primary].um).bfl;

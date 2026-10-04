@@ -3,12 +3,14 @@
 
 namespace optics {
 double SequentialSystem::imageZ() const {
+    if (!solves.empty()) return resolvedSystem(*this).imageZ();
     double z = defocus;
     for (auto& s : surfaces)
         z += s.thickness;
     return z;
 }
 std::vector<double> SequentialSystem::vertices() const {
+    if (!solves.empty()) return resolvedSystem(*this).vertices();
     std::vector<double> out;
     double z = 0;
     for (auto& s : surfaces) {
@@ -32,6 +34,10 @@ SequentialSystem SequentialSystem::demo() {
     return s;
 }
 std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) const {
+    if (!solves.empty()) {
+        try { return resolvedSystem(*this).validate(catalog); }
+        catch (const std::exception& e) { return {e.what()}; }
+    }
     std::vector<std::string> out;
     if (surfaces.empty() || surfaces.size() > 500)
         out.push_back("Нужно от 1 до 500 поверхностей");
@@ -192,6 +198,14 @@ std::optional<SurfaceHit> intersectSurface(const Surface& s, const Pose& pose, c
 }
 RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool toImage,
                size_t through, bool aperture) {
+    if (!sys.solves.empty()) {
+        try { return trace(resolvedSystem(sys), cat, ray, toImage, through, aperture); }
+        catch (const std::exception&) {
+            RayTrace failed;
+            failed.points.push_back(ray.origin);
+            return failed;
+        }
+    }
     RayTrace out;
     out.points.push_back(ray.origin);
     out.power = ray.power;
@@ -253,6 +267,7 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
     return out;
 }
 Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, double px, double py) {
+    if (!s.solves.empty()) return pupilRay(resolvedSystem(s), c, f, w, px, py);
     auto vertices = s.vertices();
     double start = s.objectDistance > 0 ? -s.objectDistance : -std::max(30.0, s.pupilDiameter * 2);
     Vec3 direction = Vec3{tan(f.x * deg), tan(f.y * deg), 1}.unit();
@@ -321,6 +336,7 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
     return make(ax, ay);
 }
 Paraxial paraxial(const SequentialSystem& s, const Catalog& cat, double w) {
+    if (!s.solves.empty()) return paraxial(resolvedSystem(s), cat, w);
     double A = 1, B = 0, C = 0, D = 1, n = 1;
     for (size_t i = 0; i < s.surfaces.size(); ++i) {
         auto& surf = s.surfaces[i];
@@ -342,6 +358,18 @@ Paraxial paraxial(const SequentialSystem& s, const Catalog& cat, double w) {
     return {-n / C, -n * A / C, std::abs(n / C) / s.pupilDiameter, {A, B, C, D}};
 }
 double autofocus(SequentialSystem& s, const Catalog& c) {
+    if (!s.solves.empty()) {
+        if (imageThicknessLinked(s))
+            throw std::invalid_argument("Автофокус требует независимой толщины до изображения: удалите её связи");
+        auto candidate = s;
+        auto physical = resolvedSystem(s);
+        const double z = autofocus(physical, c);
+        candidate.surfaces.back().thickness = physical.surfaces.back().thickness;
+        candidate.defocus = 0;
+        applySolves(candidate);
+        s = std::move(candidate);
+        return z;
+    }
     std::vector<Vec3> a, b;
     double base = s.vertices().back();
     auto field = s.fields.front();

@@ -82,6 +82,7 @@ class Window : public QMainWindow {
     void showEditor();
     void filterTree();
     void properties(int column);
+    void solveParameter(int column);
     void sourceProperties(int column);
     void rebuildEditors();
     void rebuildTree();
@@ -103,7 +104,7 @@ class Window : public QMainWindow {
     void addObject(optics::ObjectKind);
     void addSource(optics::SourceShape);
     void removeRow();
-    void addSurface();
+    bool addSurface();
     void addLens();
     void moveSurface(int);
     void autofocus();

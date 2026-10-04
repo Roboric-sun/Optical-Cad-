@@ -52,7 +52,7 @@ def verify(bundle: Path) -> None:
             [str(bundle / "Contents/MacOS/optical_cad"), "--write-examples", output],
             env=environment, check=True, timeout=60,
         )
-        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism"):
+        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet"):
             project = json.loads((Path(output) / f"{name}.optcad").read_text())
             if project["format"] != "optical-cad" or not project["sequential"]["surfaces"]:
                 raise RuntimeError(f"Invalid generated example: {name}")
@@ -61,7 +61,11 @@ def verify(bundle: Path) -> None:
                 or len(project["nonsequential"]["sources"]) != 3
             ):
                 raise RuntimeError("Spectral prism example is incomplete")
-    print(f"Package OK: {objects} Mach-O objects, local dependencies, four generated examples.")
+            if name == "linked_singlet" and (
+                project["version"] != 2 or len(project["sequential"].get("solves", [])) != 2
+            ):
+                raise RuntimeError("Constrained lens example is incomplete")
+    print(f"Package OK: {objects} Mach-O objects, local dependencies, five generated examples.")
 
 
 if __name__ == "__main__":

@@ -122,6 +122,15 @@ QByteArray serializeProject(const Project& p) {
                     {"objectDistance", s.objectDistance},
                     {"defocus", s.defocus},
                     {"pupilGrid", s.pupilGrid}};
+    if (!s.solves.empty()) {
+        QJsonArray solves;
+        for (const auto& a : s.solves)
+            solves.append(QJsonObject{{"parameter", int(a.parameter)}, {"surface", double(a.surface)},
+                {"kind", int(a.kind)}, {"reference", double(a.reference)}, {"scale", a.scale},
+                {"offset", a.offset}, {"value", a.value}, {"height", a.height},
+                {"first", double(a.first)}, {"last", double(a.last)}});
+        seq["solves"] = solves;
+    }
     QJsonObject scene{{"name", QString::fromStdString(n.name)},
                       {"objects", objects},
                       {"sources", sources},
@@ -130,7 +139,7 @@ QByteArray serializeProject(const Project& p) {
                       {"maxSegments", double(n.maxSegments)},
                       {"seed", QString::number(n.seed)}};
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", 1},
+                                     {"version", s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -161,7 +170,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || root["version"] != 1)
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -214,6 +223,18 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             surf.asphere[i] = a[i].toDouble();
         }
         s.surfaces.push_back(surf);
+    }
+    if (seq.contains("solves")) {
+        if (!seq["solves"].isArray() || seq["solves"].toArray().size() > 1000)
+            throw std::invalid_argument("Invalid parameter solves table");
+        for (auto val : seq["solves"].toArray()) {
+            auto j = val.toObject();
+            s.solves.push_back({SolveParameter(integer(j, "parameter", 1)),
+                integer(j, "surface", 499), SolveKind(integer(j, "kind", 2)),
+                integer(j, "reference", 499), number(j, "scale"), number(j, "offset"),
+                number(j, "value"), number(j, "height"), integer(j, "first", 499),
+                integer(j, "last", 500)});
+        }
     }
     for (auto val : seq["fields"].toArray()) {
         auto v = readVector(val);
@@ -277,6 +298,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     scene.seed = ns["seed"].toString().toULongLong(&seedOK);
     if (!seedOK)
         throw std::invalid_argument("Invalid random seed");
+    if (validate) applySolves(s);
     if (root.contains("optimization")) {
         if (!root["optimization"].isObject())
             throw std::invalid_argument("Invalid optimization settings");
@@ -321,7 +343,12 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
 }
 void saveProject(const QString& path, const Project& p) {
     QSaveFile file(path);
-    auto bytes = serializeProject(p);
+    auto bytes = [&] {
+        if (p.system.solves.empty()) return serializeProject(p);
+        auto resolved = p;
+        applySolves(resolved.system);
+        return serializeProject(resolved);
+    }();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
         throw std::runtime_error("Cannot save project");
 }

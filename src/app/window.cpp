@@ -1,6 +1,7 @@
 #include "window.hpp"
 #include "office.hpp"
 #include "optimization_editor.hpp"
+#include "solve_editor.hpp"
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -138,7 +139,7 @@ Window::Window(QWidget* parent)
         }
     });
     action(edit, "Отменить", QKeySequence::Undo, [this] { undo(); })->setObjectName("undoAction");
-    action(edit, "Повторить", QKeySequence::Redo, [this] { undo(true); });
+    action(edit, "Повторить", QKeySequence::Redo, [this] { undo(true); })->setObjectName("redoAction");
     auto* analysisMenu = new QMenu("Анализ", this);
     action(analysisMenu, "Одиночный луч…", {}, [this] { rayReport(); });
     action(analysisMenu, "Параксиальная трассировка", {}, [this] { paraxialReport(); });
@@ -153,7 +154,7 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.4",
+            this, "Optical CAD 0.5",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
@@ -549,6 +550,18 @@ Window::Window(QWidget* parent)
     surfaces_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(surfaces_, &QWidget::customContextMenuRequested, this, [this](QPoint point) {
         QMenu menu;
+        const auto* item = surfaces_->itemAt(point);
+        if (item && item->row() > 0 && item->row() <= int(project_.system.surfaces.size())) {
+            const int row = item->row() - 1;
+            for (int column : {3, 4}) {
+                auto* action = menu.addAction(column == 3 ? "Связь радиуса…" : "Расчёт толщины…");
+                connect(action, &QAction::triggered, this, [this, row, column] {
+                    selectRow(row);
+                    solveParameter(column);
+                });
+            }
+            menu.addSeparator();
+        }
         auto* advanced = menu.addAction("Расширенные параметры поверхностей");
         advanced->setCheckable(true);
         advanced->setChecked(advancedSurfaces_);
@@ -560,6 +573,12 @@ Window::Window(QWidget* parent)
         menu.exec(surfaces_->viewport()->mapToGlobal(point));
     });
     connect(surfaces_, &QTableWidget::cellDoubleClicked, this, [this](int row, int column) {
+        if (row > 0 && row <= int(project_.system.surfaces.size()) && (column == 3 || column == 4) &&
+            isSolved(project_.system, column == 3 ? SolveParameter::Radius : SolveParameter::Thickness, row - 1)) {
+            selectRow(row - 1);
+            solveParameter(column);
+            return;
+        }
         if (!advancedSurfaces_ && row > 0 && row <= int(project_.system.surfaces.size()) &&
             (column == 14 || column == 11)) {
             selectRow(row - 1);
@@ -666,6 +685,9 @@ void Window::checkpoint() {
     redo_.clear();
 }
 void Window::changed(bool rebuild) {
+    try { applySolves(project_.system); }
+    catch (const std::exception&) { /* recalculate reports an invalid constraint without stale analyses */ }
+    if (!project_.system.solves.empty()) rebuild = true;
     dirty_ = true;
     ++revision_;
     if (results_) {
@@ -695,6 +717,7 @@ void Window::undo(bool redo) {
     changeMode(project_.mode);
 }
 void Window::setProject(Project p) {
+    applySolves(p.system);
     parkWorkspace();
     while (views_->count()) {
         auto* w = views_->widget(0);
@@ -972,7 +995,7 @@ void Window::buildRibbon() {
         g = group("Элементы");
         g->large("lens", "Линза", [this] { addLens(); }, "addLensButton");
         g->large("mirror", "Зеркало", [this] {
-            addSurface();
+            if (!addSurface()) return;
             project_.system.surfaces[selected_].kind = SurfaceKind::Mirror;
             changed();
         });
@@ -1203,7 +1226,7 @@ void Window::properties(int column) {
     table->setCurrentCell(row, column);
     table->scrollToItem(table->item(row, column));
     if (!project_.mode && (column == 14 || column == 11)) {
-        auto& surface = project_.system.surfaces.at(selected_);
+        const auto surface = project_.system.surfaces.at(selected_);
         QDialog dialog(this);
         dialog.setObjectName("surfacePropertyDialog");
         dialog.setWindowTitle(column == 14 ? "Покрытие — коэффициенты поверхности"
@@ -1234,14 +1257,19 @@ void Window::properties(int column) {
         connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         if (dialog.exec() == QDialog::Accepted) {
-            checkpoint();
+            auto candidate = project_.system;
+            auto& updated = candidate.surfaces.at(selected_);
             if (column == 14) {
-                surface.transmission = values[0]->value();
-                surface.reflectivity = values[1]->value();
+                updated.transmission = values[0]->value();
+                updated.reflectivity = values[1]->value();
             } else {
-                surface.tilt = {values[0]->value(), values[1]->value(), values[2]->value()};
-                surface.decenter = {values[3]->value(), values[4]->value(), values[5]->value()};
+                updated.tilt = {values[0]->value(), values[1]->value(), values[2]->value()};
+                updated.decenter = {values[3]->value(), values[4]->value(), values[5]->value()};
             }
+            try { applySolves(candidate); }
+            catch (const std::exception& e) { error(e); return; }
+            checkpoint();
+            project_.system = std::move(candidate);
             changed();
         }
         return;
@@ -1365,6 +1393,14 @@ void Window::rebuildEditors() {
         });
         set(surfaces_, r + 1, 3, num(v.radius));
         set(surfaces_, r + 1, 4, num(v.thickness));
+        for (const auto& a : s.solves)
+            if (a.surface == size_t(r)) {
+                auto* item = surfaces_->item(r + 1, a.parameter == SolveParameter::Radius ? 3 : 4);
+                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+                item->setIcon(officeIcon("link"));
+                item->setForeground(QColor("#245f99"));
+                item->setToolTip(solveDescription(a) + "\nДвойной щелчок — изменить связь");
+            }
         glassCombo(surfaces_, r + 1, 5, v.material, [this, r](std::string m) {
             checkpoint();
             project_.system.surfaces[r].material = m;
@@ -1537,8 +1573,10 @@ void Window::rebuildTree() {
                 item->setIcon(3, officeIcon("field"));
             }
         }
-        node(surfaces, QString::number(s.surfaces.size() + 1) + " Изображение",
-             "Z " + num(s.imageZ()) + " мм", "image");
+        QString imagePosition;
+        try { imagePosition = "Z " + num(s.imageZ()) + " мм"; }
+        catch (const std::exception&) { imagePosition = "Ошибка связи параметров"; }
+        node(surfaces, QString::number(s.surfaces.size() + 1) + " Изображение", imagePosition, "image");
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
         for (size_t i = 0; i < s.fields.size(); ++i) {
             auto* field =
@@ -1782,6 +1820,11 @@ void Window::editSurface(int r, int c) {
     auto* item = surfaces_->item(tableRow, c);
     if (!item)
         return;
+    if ((c == 3 || c == 4) && isSolved(project_.system,
+            c == 3 ? SolveParameter::Radius : SolveParameter::Thickness, size_t(r))) {
+        rebuildEditors();
+        return;
+    }
     auto candidate = project_.system.surfaces[r];
     if (c == 1)
         candidate.name = item->text().toStdString();
@@ -1838,10 +1881,28 @@ void Window::editSurface(int r, int c) {
             return;
         *dst = v;
     }
+    auto system = project_.system;
+    system.surfaces[r] = candidate;
+    try { applySolves(system); }
+    catch (const std::exception& e) { rebuildEditors(); error(e); return; }
     checkpoint();
-    project_.system.surfaces[r] = candidate;
+    project_.system = std::move(system);
     changed(false);
     rebuildTree();
+}
+void Window::solveParameter(int column) {
+    if (selected_ < 0 || selected_ >= int(project_.system.surfaces.size())) return;
+    const auto revision = revision_;
+    SolveEditor dialog(project_, size_t(selected_), column == 3 ? SolveParameter::Radius : SolveParameter::Thickness, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        if (revision != revision_) {
+            error(std::runtime_error("Система изменилась, пока открыт редактор связи. Откройте его заново."));
+            return;
+        }
+        checkpoint();
+        project_.system = dialog.system();
+        changed();
+    }
 }
 void Window::editObject(int r, int c) {
     if (building_ || r < 0 || r >= int(project_.scene.objects.size()) || c == 0 || c == 2 ||
@@ -1978,21 +2039,29 @@ void Window::editSource(int r, int c) {
     changed(false);
     rebuildTree();
 }
-void Window::addSurface() {
-    checkpoint();
+bool Window::addSurface() {
+    auto candidate = project_;
     Surface s;
-    auto& surfaces = project_.system.surfaces;
+    auto& surfaces = candidate.system.surfaces;
+    const size_t count = surfaces.size();
     size_t at = std::clamp(selected_ + 1, 0, int(surfaces.size()));
     surfaces.insert(surfaces.begin() + at, s);
-    reindexOptimization(project_, at, 0, 1);
-    if (at <= project_.system.stop)
-        ++project_.system.stop;
+    reindexOptimization(candidate, at, 0, 1);
+    std::vector<size_t> map(count + 1);
+    for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 1;
+    try { reindexSolves(candidate.system, map); }
+    catch (const std::exception& e) { error(e); return false; }
+    if (at <= candidate.system.stop) ++candidate.system.stop;
+    checkpoint();
+    project_ = std::move(candidate);
     selected_ = int(at);
     changed();
+    return true;
 }
 void Window::addLens() {
-    checkpoint();
-    auto& surfaces = project_.system.surfaces;
+    auto candidate = project_;
+    auto& surfaces = candidate.system.surfaces;
+    const size_t count = surfaces.size();
     Surface front, back;
     front.name = "Линза · передняя";
     front.radius = 50;
@@ -2003,44 +2072,64 @@ void Window::addLens() {
     back.thickness = 20;
     size_t at = std::clamp(selected_ + 1, 0, int(surfaces.size()));
     surfaces.insert(surfaces.begin() + at, {front, back});
-    reindexOptimization(project_, at, 0, 2);
-    if (at <= project_.system.stop)
-        project_.system.stop += 2;
+    reindexOptimization(candidate, at, 0, 2);
+    std::vector<size_t> map(count + 1);
+    for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 2;
+    try { reindexSolves(candidate.system, map); }
+    catch (const std::exception& e) { error(e); return; }
+    if (at <= candidate.system.stop) candidate.system.stop += 2;
+    checkpoint();
+    project_ = std::move(candidate);
     selected_ = int(at);
     changed();
 }
 void Window::moveSurface(int step) {
-    auto& s = project_.system;
+    auto candidate = project_;
+    auto& s = candidate.system;
     int to = selected_ + step;
     if (selected_ < 0 || to < 0 || to >= int(s.surfaces.size()))
         return;
-    checkpoint();
     std::swap(s.surfaces[selected_], s.surfaces[to]);
-    if (project_.optimization)
-        for (auto& v : project_.optimization->variables)
+    if (candidate.optimization)
+        for (auto& v : candidate.optimization->variables)
             if (v.parameter != VariableParameter::Defocus) {
                 if (v.surface == size_t(selected_)) v.surface = size_t(to);
                 else if (v.surface == size_t(to)) v.surface = size_t(selected_);
             }
-    reindexOptimization(project_, 0, 0, 0);
+    reindexOptimization(candidate, 0, 0, 0);
+    std::vector<size_t> map(s.surfaces.size() + 1);
+    for (size_t i = 0; i < map.size(); ++i) map[i] = i;
+    std::swap(map[selected_], map[to]);
+    try { reindexSolves(s, map); }
+    catch (const std::exception& e) { error(e); return; }
     if (s.stop == size_t(selected_))
         s.stop = to;
     else if (s.stop == size_t(to))
         s.stop = selected_;
+    checkpoint();
+    project_ = std::move(candidate);
     selected_ = to;
     changed();
 }
 void Window::removeRow() {
     if (project_.mode == 0) {
-        auto& s = project_.system;
+        auto candidate = project_;
+        auto& s = candidate.system;
         if (s.surfaces.size() <= 1 || selected_ < 0 || selected_ >= int(s.surfaces.size()))
             return;
-        checkpoint();
+        const size_t count = s.surfaces.size();
         s.surfaces.erase(s.surfaces.begin() + selected_);
-        reindexOptimization(project_, size_t(selected_), 1, 0);
+        reindexOptimization(candidate, size_t(selected_), 1, 0);
+        std::vector<size_t> map(count + 1);
+        for (size_t i = 0; i <= count; ++i)
+            map[i] = i < size_t(selected_) ? i : i == size_t(selected_) ? SIZE_MAX : i - 1;
+        try { reindexSolves(s, map); }
+        catch (const std::exception& e) { error(e); return; }
         if (s.stop > size_t(selected_))
             --s.stop;
         s.stop = std::min(s.stop, s.surfaces.size() - 1);
+        checkpoint();
+        project_ = std::move(candidate);
     } else {
         auto& objects = project_.scene.objects;
         if (objects.size() <= 1 || selected_ < 0 || selected_ >= int(objects.size()))
@@ -2718,6 +2807,17 @@ void Window::writeExamples(const QString& directory) {
     p.mode = 1;
     p.scene = Scene::prismDemo(p.catalog);
     saveProject(directory + "/spectral_prism.optcad", p);
+    Project linked;
+    linked.system.name = "Линза — связанный радиус и толщина края";
+    ParameterSolve pickup;
+    pickup.surface = 1; pickup.reference = 0; pickup.scale = -1;
+    ParameterSolve edge;
+    edge.parameter = SolveParameter::Thickness; edge.kind = SolveKind::EdgeThickness;
+    edge.surface = 0; edge.reference = 1; edge.height = 12.5; edge.value = 1;
+    linked.system.solves = {pickup, edge};
+    applySolves(linked.system);
+    optics::autofocus(linked.system, linked.catalog);
+    saveProject(directory + "/linked_singlet.optcad", linked);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

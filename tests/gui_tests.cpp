@@ -31,6 +31,7 @@
 static int checks = 0;
 size_t improvementChecks(Window&, const QString&);
 size_t comboChecks(Window&, const QString&);
+size_t solveGUIChecks(Window&, const QString&);
 static void check(bool b, const char* text) {
     ++checks;
     if (!b)
@@ -375,6 +376,7 @@ int main(int argc, char** argv) {
         checks += int(improvementChecks(w, dir));
         w.setProject(original);
         checks += int(comboChecks(w, dir));
+        checks += int(solveGUIChecks(w, dir));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

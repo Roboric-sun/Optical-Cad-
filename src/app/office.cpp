@@ -34,7 +34,12 @@ QIcon officeIcon(const QString& name) {
         auto poly = [&](std::initializer_list<QPointF> points) {
             p.drawPolygon(QPolygonF(QList<QPointF>(points)));
         };
-        if (name == "lens") {
+        if (name == "link") {
+            p.setPen(QPen(blue, 2));
+            p.drawRoundedRect(QRectF(3, 7, 16, 9), 4, 4);
+            p.drawRoundedRect(QRectF(13, 16, 16, 9), 4, 4);
+            line(12, 13, 21, 19);
+        } else if (name == "lens") {
             QPainterPath path;
             path.moveTo(16, 3);
             path.cubicTo(5, 13, 5, 19, 16, 29);

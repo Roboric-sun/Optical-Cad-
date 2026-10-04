@@ -39,6 +39,17 @@ struct Field {
 struct Wavelength {
     double um = 0.5875618, weight = 1;
 };
+enum class SolveParameter { Radius, Thickness };
+enum class SolveKind { Pickup, EdgeThickness, OverallLength };
+struct ParameterSolve {
+    SolveParameter parameter = SolveParameter::Radius;
+    size_t surface = 0;
+    SolveKind kind = SolveKind::Pickup;
+    size_t reference = 0;
+    double scale = 1, offset = 0;
+    double value = 0, height = 0; // edge thickness/total length and radial height, mm
+    size_t first = 0, last = 0; // sum [first,last); image endpoint (last=N) includes defocus
+};
 struct SequentialSystem {
     std::string name = "Двояковыпуклая линза";
     std::vector<Surface> surfaces;
@@ -47,11 +58,20 @@ struct SequentialSystem {
     size_t primary = 1, stop = 0;
     double pupilDiameter = 10, objectDistance = 0, defocus = 0;
     int pupilGrid = 17;
+    std::vector<ParameterSolve> solves;
     double imageZ() const;
     std::vector<double> vertices() const;
     std::vector<std::string> validate(const Catalog&) const;
     static SequentialSystem demo();
 };
+bool isSolved(const SequentialSystem&, SolveParameter, size_t surface);
+bool imageThicknessLinked(const SequentialSystem&);
+// Transactional: failure leaves every cached scalar and constraint unchanged.
+void applySolves(SequentialSystem&);
+// Values-only snapshot for tracing: resolves once, then drops constraint metadata.
+SequentialSystem resolvedSystem(const SequentialSystem&);
+// Mapping includes the old image endpoint; SIZE_MAX means a removed surface.
+void reindexSolves(SequentialSystem&, const std::vector<size_t>& oldToNew);
 struct Ray {
     Vec3 origin, direction{0, 0, 1};
     double wavelength = 0.5875618, power = 1;

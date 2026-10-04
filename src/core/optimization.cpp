@@ -50,12 +50,17 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
             errors.push_back("Некорректная переменная или её границы");
         if (v.parameter == VariableParameter::Thickness && v.lower < 0)
             errors.push_back("Толщина не может быть отрицательной");
+        if ((v.parameter == VariableParameter::Radius && isSolved(s, SolveParameter::Radius, v.surface)) ||
+            (v.parameter == VariableParameter::Thickness && isSolved(s, SolveParameter::Thickness, v.surface)))
+            errors.push_back("Связанный параметр нельзя назначить независимой переменной оптимизации");
         if (!seen.insert({int(v.parameter), defocus ? 0 : v.surface}).second)
             errors.push_back("Переменная задана дважды");
         if (refocus && (defocus || (v.parameter == VariableParameter::Thickness &&
                                    v.surface + 1 == s.surfaces.size())))
             errors.push_back("Автофокус управляет последней толщиной и дефокусом: уберите их из переменных");
     }
+    if (refocus && imageThicknessLinked(s))
+        errors.push_back("Автофокус конфликтует со связями толщины до изображения");
     double weights = 0;
     for (auto& o : operands) {
         if (int(o.kind) < 0 || int(o.kind) > int(MeritKind::Throughput) || o.field < -1 ||
@@ -72,7 +77,7 @@ OptimizationPlan defaultOptimization(const SequentialSystem& s, const Catalog& c
     OptimizationPlan p;
     for (size_t i = 0; i < s.surfaces.size(); ++i) {
         double r = s.surfaces[i].radius;
-        if (r == 0 || s.surfaces[i].kind != SurfaceKind::Refract)
+        if (r == 0 || s.surfaces[i].kind != SurfaceKind::Refract || isSolved(s, SolveParameter::Radius, i))
             continue;
         p.variables.push_back({VariableParameter::Radius, i, std::min(.7 * r, 1.3 * r),
                                std::max(.7 * r, 1.3 * r), std::abs(r) * .05});
@@ -92,6 +97,8 @@ OptimizationPlan defaultOptimization(const SequentialSystem& s, const Catalog& c
 MeritEvaluation evaluateMerit(const SequentialSystem& s, const Catalog& c,
                              const OptimizationPlan& p) {
     auto errors = p.validate(s);
+    if (!errors.empty()) throw std::invalid_argument(errors.front());
+    if (!s.solves.empty()) return evaluateMerit(resolvedSystem(s), c, p);
     if (errors.empty())
         errors = s.validate(c);
     if (!errors.empty())
@@ -186,6 +193,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
             throw std::invalid_argument("Начальное значение переменной выходит за границы");
     }
     auto best = s;
+    applySolves(best);
     if (p.refocus) autofocus(best, c);
     OptimizationResult out;
     out.before = evaluateMerit(best, c, p).score;
@@ -215,6 +223,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
                 setVariable(trial, v, next);
                 ++out.evaluations;
                 try {
+                    applySolves(trial);
                     if (p.refocus) autofocus(trial, c);
                     double score = evaluateMerit(trial, c, p).score;
                     if (score < out.after) {
