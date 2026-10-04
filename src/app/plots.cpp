@@ -8,6 +8,42 @@
 #include <algorithm>
 
 using namespace optics;
+QByteArray detectorProfileCSV(const DetectorStatistics& s) {
+    QByteArray csv = "axis,position_mm,integrated_power_W_per_mm\n";
+    for (int axis = 0; axis < 2; ++axis) {
+        const auto& coordinates = axis ? s.y : s.x;
+        const auto& values = axis ? s.marginalY : s.marginalX;
+        for (size_t i = 0; i < coordinates.size(); ++i)
+            csv += QString("%1,%2,%3\n").arg(axis ? "Y" : "X")
+                       .arg(coordinates[i], 0, 'g', 14).arg(values.at(i), 0, 'g', 14).toUtf8();
+    }
+    return csv;
+}
+QByteArray detectorStatisticsCSV(const DetectorData& d, const DetectorStatistics& s,
+                                 double launchedPower, bool partial) {
+    QByteArray csv = "metric,value,unit\n";
+    auto row = [&](QString key, double value, QString unit, bool valid = true) {
+        csv += QString("%1,%2,%3\n").arg(key, valid ? QString::number(value, 'g', 14) : QString(), unit).toUtf8();
+    };
+    row("partial_trace", partial ? 1 : 0, "boolean");
+    row("has_power", s.hasPower ? 1 : 0, "boolean");
+    row("hits", double(d.hits), "count");
+    row("power", s.power, "W");
+    row("launched_power", launchedPower, "W");
+    row("efficiency", launchedPower > 0 ? s.power / launchedPower : 0, "fraction", launchedPower > 0);
+    row("minimum_irradiance", s.minimum, "W/mm2");
+    row("maximum_irradiance", s.maximum, "W/mm2");
+    row("mean_irradiance", s.mean, "W/mm2");
+    row("coefficient_of_variation", s.coefficientOfVariation, "fraction", s.hasPower);
+    row("centroid_x", s.centroid.x, "mm", s.hasPower);
+    row("centroid_y", s.centroid.y, "mm", s.hasPower);
+    row("rms_x", s.rmsX, "mm", s.hasPower);
+    row("rms_y", s.rmsY, "mm", s.hasPower);
+    row("rms_radius", s.rmsRadius, "mm", s.hasPower);
+    row("radius_50", s.radius50, "mm", s.hasPower);
+    row("radius_80", s.radius80, "mm", s.hasPower);
+    return csv;
+}
 QByteArray rayFanCSV(const RayFan& fan) {
     QByteArray csv =
         "wavelength_um,pupil,tangential_um,sagittal_um,tangential_valid,sagittal_valid\n";
@@ -58,6 +94,8 @@ QString viewName(View v) {
         return "Хроматический фокус";
     case View::GeometricMTF:
         return "Геометрическая MTF";
+    case View::DetectorProfile:
+        return "Профили и статистика детектора";
     }
     return {};
 }
@@ -75,6 +113,8 @@ PlotWidget::PlotWidget(View v, QWidget* parent) : QWidget(parent), view(v) {
     setMinimumSize(280, 210);
     if (v == View::Fan)
         setMinimumSize(500, 250);
+    if (v == View::DetectorProfile)
+        setMinimumSize(650, 320);
     setMouseTracking(true);
     setObjectName("plot_" + QString::number(int(v)));
 }
@@ -135,6 +175,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), Qt::white);
     const bool toolbar = findChild<QToolBar*>("plotToolbar", Qt::FindDirectChildrenOnly) != nullptr;
     QRectF area(58, 52, width() - 90, height() - 95);
+    if (view == View::DetectorProfile)
+        area = QRectF(58, 80, width() - 375, height() - 175);
     if (officePresentation && (view == View::Layout || view == View::Scene))
         area = QRectF(14, toolbar ? 42 : 14, width() - 28, height() - (toolbar ? 56 : 28));
     p.setPen(QColor("#244565"));
@@ -631,7 +673,71 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         p.setBrush(colors[0]);
         for (auto a : line)
             p.drawEllipse(a, 3, 3);
-    } else if (int(view) >= 10) {
+    } else if (view == View::DetectorProfile) {
+        if (!d.scene || d.detectorStats.empty()) {
+            p.drawText(area, Qt::AlignCenter, "Запустите трассировку для расчёта профилей");
+            return;
+        }
+        size_t index = std::min(size_t(d.detector), d.detectorStats.size() - 1);
+        const auto& s = d.detectorStats[index];
+        const auto& dt = d.scene->detectors.at(index);
+        const auto& object = d.project.scene.objects.at(dt.objectIndex);
+        double limit = std::max(object.size.x, object.size.y) / 2;
+        double peak = 0;
+        for (double v : s.marginalX) peak = std::max(peak, v);
+        for (double v : s.marginalY) peak = std::max(peak, v);
+        auto map = axes(-limit, limit, 0, std::max(1e-12, peak * 1.1) / zoom,
+                        "Координата X / Y, мм", "Мощность по координате, Вт/мм");
+        p.save();
+        p.setClipRect(area);
+        for (int axis = 0; axis < 2; ++axis) {
+            const auto& positions = axis ? s.y : s.x;
+            const auto& values = axis ? s.marginalY : s.marginalX;
+            QPolygonF line;
+            for (size_t i = 0; i < positions.size(); ++i) line << map(positions[i], values[i]);
+            p.setPen(QPen(colors[axis], 1.8));
+            p.drawPolyline(line);
+            for (auto point : line) p.drawEllipse(point, 1.5, 1.5);
+        }
+        p.restore();
+        QFont small = font(); small.setPixelSize(11); p.setFont(small);
+        for (int axis = 0; axis < 2; ++axis) {
+            const double x = area.left() + axis * 90;
+            p.setPen(QPen(colors[axis], 2));
+            p.drawLine(QPointF(x, 66), QPointF(x + 20, 66));
+            p.setPen(QColor("#637b8e"));
+            p.drawText(QRectF(x + 26, 58, 50, 16), axis ? "Ось Y" : "Ось X");
+        }
+        const double left = area.right() + 24;
+        p.setPen(QColor("#245f99"));
+        p.drawText(QRectF(left, area.top(), 270, 35), Qt::TextWordWrap,
+                   QString::fromStdString(object.name));
+        auto number = [&](double value, QString unit = " мм") {
+            return s.hasPower ? QString::number(value, 'g', 5) + unit : QString("—");
+        };
+        const QStringList labels{"Мощность", "Доля от источников", "Центр X / Y, мм", "RMS X / Y, мм",
+                                 "RMS радиуса, мм", "R50 / R80, мм", "CV всей площади"};
+        const QStringList values{
+            QString::number(s.power, 'g', 6) + " Вт",
+            d.scene->launchedPower > 0 ? QString::number(100 * s.power / d.scene->launchedPower, 'f', 2) + " %" : "—",
+            number(s.centroid.x, "") + " / " + number(s.centroid.y, ""),
+            number(s.rmsX, "") + " / " + number(s.rmsY, ""), number(s.rmsRadius, ""),
+            number(s.radius50, "") + " / " + number(s.radius80, ""),
+            number(100 * s.coefficientOfVariation, " %")};
+        double y = area.top() + 30;
+        const double spacing = std::max(20., std::min(32., (height() - y - 63) / labels.size()));
+        for (int i = 0; i < labels.size(); ++i) {
+            p.setPen(QColor("#75889c"));
+            p.drawText(QRectF(left, y, 124, 22), Qt::AlignVCenter | Qt::TextWordWrap, labels[i]);
+            p.setPen(QColor("#20364d"));
+            p.drawText(QRectF(left + 129, y, 145, 22), Qt::AlignVCenter, values[i]);
+            y += spacing;
+        }
+        p.setPen(QColor("#637b8e"));
+        p.drawText(QRectF(58, height() - 60, width() - 85, 30), Qt::TextWordWrap,
+                   "Профили интегрированы по другой координате. Моменты и радиусы — по центрам ячеек." +
+                       QString(d.scene->cancelled ? " Частичный расчёт." : ""));
+    } else if (int(view) >= 10 && int(view) <= 13) {
         auto& curve = d.curves[int(view) - 10];
         if (curve.x.empty()) {
             p.drawText(area, Qt::AlignCenter, "Анализ неприменим к этой системе");

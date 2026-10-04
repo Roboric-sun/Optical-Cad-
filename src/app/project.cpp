@@ -5,6 +5,23 @@
 #include <QSaveFile>
 
 using namespace optics;
+void reindexOptimization(Project& p, size_t at, size_t removed, size_t inserted) {
+    if (!p.optimization) return;
+    auto& variables = p.optimization->variables;
+    std::erase_if(variables, [=](auto v) {
+        return v.parameter != VariableParameter::Defocus && v.surface >= at &&
+               v.surface < at + removed;
+    });
+    for (auto& v : variables)
+        if (v.parameter != VariableParameter::Defocus && v.surface >= at + removed)
+            v.surface = v.surface - removed + inserted;
+    if (p.optimization->refocus)
+        std::erase_if(variables, [&](auto v) {
+            return v.parameter == VariableParameter::Defocus ||
+                   (v.parameter == VariableParameter::Thickness && v.surface + 1 == p.system.surfaces.size());
+        });
+    if (variables.empty()) p.optimization.reset();
+}
 static QJsonArray vector(Vec3 v) {
     return {v.x, v.y, v.z};
 }
@@ -112,14 +129,31 @@ QByteArray serializeProject(const Project& p) {
                       {"displayRays", double(n.displayRays)},
                       {"maxSegments", double(n.maxSegments)},
                       {"seed", QString::number(n.seed)}};
-    return QJsonDocument(QJsonObject{{"format", "optical-cad"},
+    QJsonObject root{{"format", "optical-cad"},
                                      {"version", 1},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
                                      {"nonsequential", scene},
-                                     {"workspace", p.workspace}})
-        .toJson(QJsonDocument::Indented);
+                                     {"workspace", p.workspace}};
+    if (p.optimization) {
+        const auto& plan = *p.optimization;
+        QJsonArray variables, operands;
+        for (auto v : plan.variables)
+            variables.append(QJsonObject{{"parameter", int(v.parameter)},
+                                         {"surface", double(v.surface)}, {"lower", v.lower},
+                                         {"upper", v.upper}, {"step", v.step}});
+        for (auto o : plan.operands)
+            operands.append(QJsonObject{{"kind", int(o.kind)}, {"field", o.field},
+                                        {"target", o.target}, {"scale", o.scale},
+                                        {"weight", o.weight}});
+        root["optimization"] = QJsonObject{{"variables", variables}, {"operands", operands},
+                                           {"iterations", double(plan.iterations)},
+                                           {"pupilGrid", plan.pupilGrid},
+                                           {"minimumThroughput", plan.minimumThroughput},
+                                           {"refocus", plan.refocus}};
+    }
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 Project deserializeProject(const QByteArray& bytes, bool validate) {
     QJsonParseError error;
@@ -243,6 +277,39 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     scene.seed = ns["seed"].toString().toULongLong(&seedOK);
     if (!seedOK)
         throw std::invalid_argument("Invalid random seed");
+    if (root.contains("optimization")) {
+        if (!root["optimization"].isObject())
+            throw std::invalid_argument("Invalid optimization settings");
+        auto j = root["optimization"].toObject();
+        OptimizationPlan plan;
+        if (!j["variables"].isArray() || !j["operands"].isArray() || !j["refocus"].isBool() ||
+            j["variables"].toArray().size() > 64 || j["operands"].toArray().size() > 64)
+            throw std::invalid_argument("Invalid optimization table");
+        for (auto entry : j["variables"].toArray()) {
+            auto v = entry.toObject();
+            plan.variables.push_back({VariableParameter(integer(v, "parameter", 7)),
+                                      integer(v, "surface", 499), number(v, "lower"),
+                                      number(v, "upper"), number(v, "step")});
+        }
+        for (auto entry : j["operands"].toArray()) {
+            auto o = entry.toObject();
+            double field = number(o, "field");
+            if (field < -1 || field > 49 || std::floor(field) != field)
+                throw std::invalid_argument("Invalid merit field");
+            plan.operands.push_back({MeritKind(integer(o, "kind", 6)), int(field),
+                                     number(o, "target"), number(o, "scale"), number(o, "weight")});
+        }
+        plan.iterations = integer(j, "iterations", 100);
+        plan.pupilGrid = int(integer(j, "pupilGrid", 33));
+        plan.minimumThroughput = number(j, "minimumThroughput");
+        plan.refocus = j["refocus"].toBool();
+        // Undo snapshots can temporarily contain settings invalidated by a field edit.
+        if (validate) {
+            auto errors = plan.validate(s);
+            if (!errors.empty()) throw std::invalid_argument(errors.front());
+        }
+        p.optimization = std::move(plan);
+    }
     if (validate) {
         auto a = s.validate(p.catalog), b = scene.validate(p.catalog);
         if (!a.empty())

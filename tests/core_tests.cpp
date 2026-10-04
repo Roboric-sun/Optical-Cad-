@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 using namespace optics;
+size_t optimizationChecks();
 static size_t count = 0;
 static void check(bool condition, const char* name) {
     ++count;
@@ -355,6 +356,7 @@ int main() {
             check(opaqueResult.absorbed == 100 && opaqueResult.detected == 0,
                   "Every prism face closes the solid and blocks incident rays");
         }
+        count += optimizationChecks();
         std::cout << count << " physical checks passed\n";
         return 0;
     } catch (const std::exception& e) {

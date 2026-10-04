@@ -29,6 +29,7 @@
 #include <stdexcept>
 
 static int checks = 0;
+size_t improvementChecks(Window&, const QString&);
 static void check(bool b, const char* text) {
     ++checks;
     if (!b)
@@ -370,6 +371,7 @@ int main(int argc, char** argv) {
               "Ray-path CSV identifies every source, wavelength and interaction category");
         if (!dir.isEmpty())
             w.grab().save(dir + "/prism_scene.png");
+        checks += int(improvementChecks(w, dir));
         w.setProject(original);
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";

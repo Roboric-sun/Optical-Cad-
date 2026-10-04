@@ -34,6 +34,7 @@ class Window : public QMainWindow {
     bool calculating() const {
         return sceneBusy_;
     }
+    bool optimizing() const { return optimizationBusy_; }
     void writeExamples(const QString& directory);
 
   protected:
@@ -59,13 +60,16 @@ class Window : public QMainWindow {
     QSet<int> hidden_;
     bool uiReady_ = false;
     bool sceneBusy_ = false;
+    bool optimizationBusy_ = false;
     bool advancedSurfaces_ = false;
     QComboBox *fieldBox_, *detectorBox_;
     QProgressBar* progress_;
     QLabel* status_;
     QTimer debounce_;
     QFutureWatcher<optics::SceneTrace> watcher_;
+    QFutureWatcher<std::pair<optics::SequentialSystem, optics::OptimizationResult>> optimizationWatcher_;
     std::shared_ptr<std::atomic<bool>> cancel_;
+    std::shared_ptr<std::atomic<bool>> optimizationCancel_ = std::make_shared<std::atomic<bool>>(false);
     size_t revision_ = 0, jobRevision_ = 0;
     bool building_ = false, dirty_ = false;
     int selected_ = 0, field_ = 0;
@@ -103,11 +107,13 @@ class Window : public QMainWindow {
     void addLens();
     void moveSurface(int);
     void autofocus();
-    void optimize();
+    void optimize(bool configured = false);
+    void optimizationSettings();
     void rayReport();
     void paraxialReport();
     void prescription();
     void exportCSV();
+    void exportDetectorStatistics();
     void save(bool as = false);
     void open();
     bool mayDiscard();

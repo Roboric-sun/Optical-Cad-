@@ -1,5 +1,6 @@
 #include "window.hpp"
 #include "office.hpp"
+#include "optimization_editor.hpp"
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -152,14 +153,14 @@ Window::Window(QWidget* parent)
         });
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.3",
+            this, "Optical CAD 0.4",
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
             "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
             "монохроматические PSF и MTF, тангенциальные и сагиттальные ray "
-            "fan.\n\nНепоследовательный: примитивы, линза и треугольные призмы, источники, "
+            "fan, настраиваемая оптимизация.\n\nНепоследовательный: примитивы, линза и треугольные призмы, источники, "
             "отражение, преломление, диффузное рассеяние, детекторы и баланс "
-            "мощности.\n\nSTEP/IGES, ОПАЛ, поляризация, смешанная трассировка и интеграция с САРУС "
+            "мощности, профили и статистика пятна.\n\nSTEP/IGES, ОПАЛ, поляризация, смешанная трассировка и интеграция с САРУС "
             "ещё не реализованы. Вложенные и пересекающиеся прозрачные тела не "
             "поддерживаются.\n\nPSF/MTF используют приближение Фраунгофера на входном зрачке и "
             "требуют центрированной системы; проверяйте его применимость. Каталожные модели без "
@@ -605,6 +606,11 @@ Window::Window(QWidget* parent)
             auto result = watcher_.result();
             if (jobRevision_ == revision_) {
                 results_->scene = std::move(result);
+                results_->detectorStats.clear();
+                for (const auto& dt : results_->scene->detectors) {
+                    const auto& o = project_.scene.objects.at(dt.objectIndex);
+                    results_->detectorStats.push_back(detectorStatistics(dt, o.size.x, o.size.y));
+                }
                 updatePlots();
                 const auto& scene = project_.scene;
                 const auto count =
@@ -646,7 +652,9 @@ Window::Window(QWidget* parent)
 }
 Window::~Window() {
     cancel_->store(true);
+    optimizationCancel_->store(true);
     watcher_.waitForFinished();
+    optimizationWatcher_.waitForFinished();
 }
 void Window::error(const std::exception& e) {
     QMessageBox::warning(this, "Проверка данных", QString::fromUtf8(e.what()));
@@ -660,8 +668,10 @@ void Window::checkpoint() {
 void Window::changed(bool rebuild) {
     dirty_ = true;
     ++revision_;
-    if (results_)
+    if (results_) {
         results_->scene.reset();
+        results_->detectorStats.clear();
+    }
     if (rebuild) {
         rebuildEditors();
         rebuildTree();
@@ -698,6 +708,7 @@ void Window::setProject(Project p) {
     dirty_ = false;
     ++revision_;
     cancel_->store(true);
+    optimizationCancel_->store(true);
     if (results_)
         results_->scene.reset();
     selected_ = 0;
@@ -773,7 +784,7 @@ void Window::changeMode(int mode) {
         project_.workspace[mode ? "nonsequentialViews" : "sequentialViews"].toArray();
     for (auto v : saved) {
         int id = v.toInt(-1);
-        if (id >= 0 && id <= 13 && ((mode == 1) == (id == 8 || id == 9)))
+        if (id >= 0 && id <= 14 && ((mode == 1) == (id == 8 || id == 9 || id == 14)))
             addView(View(id));
     }
 }
@@ -840,8 +851,8 @@ void Window::buildRibbon() {
         return g->small(
             col, analysisIcon(v), label.isEmpty() ? viewName(v) : label,
             [this, v] {
-                if ((v == View::Scene || v == View::Detector) != (project_.mode == 1))
-                    changeMode(v == View::Scene || v == View::Detector ? 1 : 0);
+                if ((v == View::Scene || v == View::Detector || v == View::DetectorProfile) != (project_.mode == 1))
+                    changeMode(v == View::Scene || v == View::Detector || v == View::DetectorProfile ? 1 : 0);
                 addView(v);
             },
             "analysis_" + QString::number(int(v)));
@@ -871,6 +882,9 @@ void Window::buildRibbon() {
             g = group("Сцена и приёмники");
             g->large("scene", "3D-модель\nхода лучей", [this] { addView(View::Scene); });
             g->large("map", "Карта\nоблучённости", [this] { addView(View::Detector); });
+            auto* col = g->column();
+            analysis(g, col, View::DetectorProfile, "Профили и статистика");
+            g->small(col, "import", "Сводка детектора в CSV", [this] { exportDetectorStatistics(); }, "detectorStatisticsCSVButton");
         }
         g = group("Данные");
         g->large("import", "Выгрузка\nданных", [this] { exportCSV(); }, "csvButton");
@@ -885,8 +899,15 @@ void Window::buildRibbon() {
         b = g->large("focus", "Автофокус", [this] { autofocus(); }, "autofocusButton");
         b->setEnabled(!project_.mode);
         auto* col = g->column();
-        unavailable(g->small(col, "settings", "Редактор функции качества", {}),
-                    "произвольная функция качества");
+        b = g->small(col, "settings", "Редактор функции качества",
+                     [this] { optimizationSettings(); }, "meritEditorButton");
+        b->setEnabled(!project_.mode);
+        b = g->small(col, "optimize", "Оптимизация по настройкам",
+                     [this] { optimize(true); }, "customOptimizeButton");
+        b->setEnabled(!project_.mode);
+        g->small(col, "remove", "Остановить оптимизацию", [this] {
+            optimizationCancel_->store(true);
+        }, "cancelOptimizationButton");
         row->addStretch();
         return;
     }
@@ -1681,8 +1702,10 @@ void Window::recalculate() {
     results_->field = field_;
     results_->selected = selected_;
     results_->detector = std::max(0, detectorBox_->currentIndex());
-    if (previous)
+    if (previous && previous->scene) {
         results_->scene = previous->scene;
+        results_->detectorStats = previous->detectorStats;
+    }
     if (project_.mode == 0) {
         auto errors = project_.system.validate(project_.catalog);
         if (!errors.empty())
@@ -1961,6 +1984,7 @@ void Window::addSurface() {
     auto& surfaces = project_.system.surfaces;
     size_t at = std::clamp(selected_ + 1, 0, int(surfaces.size()));
     surfaces.insert(surfaces.begin() + at, s);
+    reindexOptimization(project_, at, 0, 1);
     if (at <= project_.system.stop)
         ++project_.system.stop;
     selected_ = int(at);
@@ -1979,6 +2003,7 @@ void Window::addLens() {
     back.thickness = 20;
     size_t at = std::clamp(selected_ + 1, 0, int(surfaces.size()));
     surfaces.insert(surfaces.begin() + at, {front, back});
+    reindexOptimization(project_, at, 0, 2);
     if (at <= project_.system.stop)
         project_.system.stop += 2;
     selected_ = int(at);
@@ -1991,6 +2016,13 @@ void Window::moveSurface(int step) {
         return;
     checkpoint();
     std::swap(s.surfaces[selected_], s.surfaces[to]);
+    if (project_.optimization)
+        for (auto& v : project_.optimization->variables)
+            if (v.parameter != VariableParameter::Defocus) {
+                if (v.surface == size_t(selected_)) v.surface = size_t(to);
+                else if (v.surface == size_t(to)) v.surface = size_t(selected_);
+            }
+    reindexOptimization(project_, 0, 0, 0);
     if (s.stop == size_t(selected_))
         s.stop = to;
     else if (s.stop == size_t(to))
@@ -2005,6 +2037,7 @@ void Window::removeRow() {
             return;
         checkpoint();
         s.surfaces.erase(s.surfaces.begin() + selected_);
+        reindexOptimization(project_, size_t(selected_), 1, 0);
         if (s.stop > size_t(selected_))
             --s.stop;
         s.stop = std::min(s.stop, s.surfaces.size() - 1);
@@ -2158,6 +2191,12 @@ void Window::parameters() {
                 throw std::invalid_argument(errors.front());
             checkpoint();
             s = candidate;
+            if (project_.optimization) {
+                std::erase_if(project_.optimization->operands, [&](auto o) {
+                    return o.field >= 0 && size_t(o.field) >= s.fields.size();
+                });
+                if (project_.optimization->operands.empty()) project_.optimization.reset();
+            }
             field_ = 0;
             changed();
             dialog.accept();
@@ -2296,7 +2335,7 @@ void Window::importCatalog() {
     }
 }
 void Window::runScene() {
-    if (sceneBusy_)
+    if (sceneBusy_ || optimizationBusy_)
         return;
     auto errors = project_.scene.validate(project_.catalog);
     if (!errors.empty()) {
@@ -2319,41 +2358,126 @@ void Window::runScene() {
         return traceScene(scene, catalog, [cancel](size_t, size_t) { return !cancel->load(); });
     }));
 }
-void Window::optimize() {
+void Window::optimizationSettings() {
+    try {
+        OptimizationEditor dialog(project_, this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        checkpoint();
+        project_.optimization = dialog.plan();
+        changed(false);
+    } catch (const std::exception& e) { error(e); }
+}
+void Window::optimize(bool configured) {
+    if (project_.mode || optimizationBusy_ || sceneBusy_) return;
+    if (configured && !project_.optimization) {
+        optimizationSettings();
+        if (!project_.optimization) return;
+    }
     auto project = project_;
-    auto startRevision = revision_;
-    auto* watcher = new QFutureWatcher<std::pair<SequentialSystem, OptimizationResult>>(this);
+    const auto startRevision = revision_;
+    optimizationCancel_ = std::make_shared<std::atomic<bool>>(false);
+    auto cancel = optimizationCancel_;
+    optimizationBusy_ = true;
     progress_->setRange(0, 0);
     progress_->show();
-    status_->setText("Оптимизация радиусов и положения изображения…");
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, startRevision] {
+    status_->setText(configured ? "Оптимизация по заданным переменным и критериям…"
+                                : "Оптимизация радиусов и положения изображения…");
+    disconnect(&optimizationWatcher_, nullptr, this, nullptr);
+    connect(&optimizationWatcher_, &QFutureWatcherBase::finished, this,
+            [this, project, startRevision, configured, cancel] {
         progress_->hide();
+        optimizationBusy_ = false;
         try {
-            auto result = watcher->result();
-            if (revision_ == startRevision) {
-                checkpoint();
-                project_.system = result.first;
-                changed();
-                recalculate();
-                QMessageBox::information(
-                    this, "Оптимизация",
-                    QString("Функция качества (RMS + штраф за изменение EFL): %1 → %2 "
-                            "мкм\nПроверок вариантов: %3\nПеременные: все неплоские радиусы; "
-                            "автофокус после каждой попытки.")
-                        .arg(result.second.before * 1000, 0, 'f', 4)
-                        .arg(result.second.after * 1000, 0, 'f', 4)
-                        .arg(result.second.evaluations));
-            } else
+            auto result = optimizationWatcher_.result();
+            if (cancel->load() || result.second.cancelled) {
+                status_->setText("Оптимизация остановлена. Система сохранена без изменений.");
+                return;
+            }
+            if (revision_ != startRevision) {
                 status_->setText("Система изменилась — результат оптимизации отброшен");
-        } catch (const std::exception& e) {
-            error(e);
-        }
-        watcher->deleteLater();
+                return;
+            }
+            checkpoint();
+            project_.system = result.first;
+            changed();
+            recalculate();
+            QString report;
+            if (configured) {
+                auto initial = project.system;
+                const auto& plan = *project.optimization;
+                if (plan.refocus) optics::autofocus(initial, project.catalog);
+                auto before = evaluateMerit(initial, project.catalog, plan);
+                auto after = evaluateMerit(result.first, project.catalog, plan);
+                report = QString("Безразмерная функция качества: %1 → %2\nПроверок вариантов: %3\n"
+                                 "Сетка зрачка: %4 × %4; проходов: %5\n\nПеременные (до → после):\n")
+                             .arg(result.second.before, 0, 'g', 10)
+                             .arg(result.second.after, 0, 'g', 10)
+                             .arg(result.second.evaluations).arg(plan.pupilGrid).arg(plan.iterations);
+                for (auto v : plan.variables)
+                    report += QString("%1 · %2: %3 → %4 [%5…%6]\n")
+                                  .arg(v.parameter == VariableParameter::Defocus ? "Система" : QString("S%1").arg(v.surface + 1))
+                                  .arg(parameterName(v.parameter)).arg(variableValue(initial, v), 0, 'g', 12)
+                                  .arg(variableValue(result.first, v), 0, 'g', 12)
+                                  .arg(v.lower, 0, 'g', 12).arg(v.upper, 0, 'g', 12);
+                report += "\nКритерии: значение до → после; цель; масштаб; вес\n";
+                for (size_t i = 0; i < plan.operands.size(); ++i) {
+                    auto o = plan.operands[i];
+                    report += QString("%1 · %2: %3 → %4; %5; %6; %7\n")
+                                  .arg(meritName(o.kind), o.field < 0 ? "все поля" : QString("поле %1").arg(o.field + 1))
+                                  .arg(before.values[i], 0, 'g', 12).arg(after.values[i], 0, 'g', 12)
+                                  .arg(o.target, 0, 'g', 12).arg(o.scale, 0, 'g', 12).arg(o.weight, 0, 'g', 12);
+                }
+                report += "\nКритерий после каждого прохода:\n";
+                for (size_t i = 0; i < result.second.history.size(); ++i)
+                    report += QString("%1: %2\n").arg(i).arg(result.second.history[i], 0, 'g', 12);
+            } else {
+                report = QString("RMS + штраф за изменение EFL: %1 → %2 мкм\n"
+                                 "Проверок вариантов: %3\nПеременные: неплоские радиусы; автофокус после каждой попытки.")
+                             .arg(result.second.before * 1000, 0, 'f', 4)
+                             .arg(result.second.after * 1000, 0, 'f', 4).arg(result.second.evaluations);
+            }
+            auto* dialog = new QDialog(this);
+            dialog->setObjectName("optimizationReportDialog");
+            dialog->setWindowTitle("Результат оптимизации");
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->resize(840, 560);
+            auto* layout = new QVBoxLayout(dialog);
+            auto* text = new QPlainTextEdit;
+            text->setObjectName("optimizationReportText");
+            text->setReadOnly(true);
+            text->setPlainText(report);
+            layout->addWidget(text);
+            auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+            buttons->button(QDialogButtonBox::Close)->setText("Закрыть");
+            layout->addWidget(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+            dialog->show();
+        } catch (const std::exception& e) { error(e); }
     });
-    watcher->setFuture(QtConcurrent::run([project]() mutable {
-        auto result = optimizeRadii(project.system, project.catalog);
+    optimizationWatcher_.setFuture(QtConcurrent::run([project, configured, cancel]() mutable {
+        auto result = configured
+            ? optics::optimize(project.system, project.catalog, *project.optimization,
+                               [cancel](size_t, size_t, double) { return !cancel->load(); })
+            : optimizeRadii(project.system, project.catalog);
         return std::make_pair(project.system, result);
     }));
+}
+void Window::exportDetectorStatistics() {
+    if (!results_ || !results_->scene || results_->detectorStats.empty()) {
+        status_->setText("Сначала рассчитайте карту детектора");
+        return;
+    }
+    const size_t index = std::min(size_t(results_->detector), results_->detectorStats.size() - 1);
+    auto path = QFileDialog::getSaveFileName(this, "Сводка выбранного детектора", {}, "CSV (*.csv)");
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".csv", Qt::CaseInsensitive)) path += ".csv";
+    auto csv = detectorStatisticsCSV(results_->scene->detectors.at(index), results_->detectorStats[index],
+                                     results_->scene->launchedPower, results_->scene->cancelled);
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(csv) != csv.size() || !file.commit()) {
+        std::runtime_error e("Не удалось сохранить сводку детектора");
+        error(e);
+    }
 }
 void Window::exportCSV() {
     if (!results_)
@@ -2385,6 +2509,9 @@ void Window::exportCSV() {
                          .arg(watts, 0, 'g', 14)
                          .arg(watts / dt.cellArea, 0, 'g', 14));
             }
+    } else if (plot->view == View::DetectorProfile) {
+        if (!d.scene || d.detectorStats.empty()) return;
+        csv = detectorProfileCSV(d.detectorStats.at(d.detector));
     } else if (plot->view == View::Scene) {
         if (!d.scene)
             return;
@@ -2438,7 +2565,7 @@ void Window::exportCSV() {
                          .arg((x - n / 2) * d.diffraction.pixelUm, 0, 'g', 14)
                          .arg((y - n / 2) * d.diffraction.pixelUm, 0, 'g', 14)
                          .arg(d.diffraction.psf[y * n + x], 0, 'g', 14));
-    } else if (int(plot->view) >= 10) {
+    } else if (int(plot->view) >= 10 && int(plot->view) <= 13) {
         auto& curve = d.curves[int(plot->view) - 10];
         QString header = "x";
         for (size_t j = 0; j < curve.y.size(); ++j)

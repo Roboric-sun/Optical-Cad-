@@ -126,8 +126,42 @@ AnalysisCurve geometricMTF(const Spot&, double maximumFrequency = 500, int sampl
 struct OptimizationResult {
     double before = 0, after = 0;
     size_t evaluations = 0;
+    std::vector<double> history;
+    bool cancelled = false;
 };
 OptimizationResult optimizeRadii(SequentialSystem&, const Catalog&, size_t iterations = 12);
+
+enum class VariableParameter { Radius, Thickness, Conic, A4, A6, A8, A10, Defocus };
+struct OptimizationVariable {
+    VariableParameter parameter = VariableParameter::Radius;
+    size_t surface = 0; // ignored for Defocus
+    double lower = 0, upper = 1, step = .1;
+};
+enum class MeritKind { SpotRMS, EFL, BFL, ImageDistance, CentroidX, CentroidY, Throughput };
+struct MeritOperand {
+    MeritKind kind = MeritKind::SpotRMS;
+    int field = -1; // -1: weighted mean of squared residuals across all fields
+    double target = 0, scale = 1, weight = 1;
+};
+struct OptimizationPlan {
+    std::vector<OptimizationVariable> variables;
+    std::vector<MeritOperand> operands;
+    size_t iterations = 30;
+    int pupilGrid = 9;
+    double minimumThroughput = .85; // geometric survival, checked for every field
+    bool refocus = false;
+    std::vector<std::string> validate(const SequentialSystem&) const;
+};
+struct MeritEvaluation {
+    double score = 0; // dimensionless weighted RMS of (value-target)/scale
+    std::vector<double> values, contributions;
+};
+double variableValue(const SequentialSystem&, const OptimizationVariable&);
+OptimizationPlan defaultOptimization(const SequentialSystem&, const Catalog&);
+MeritEvaluation evaluateMerit(const SequentialSystem&, const Catalog&, const OptimizationPlan&);
+// Callback returns false to cancel. A cancelled run leaves the system unchanged.
+OptimizationResult optimize(SequentialSystem&, const Catalog&, const OptimizationPlan&,
+                            std::function<bool(size_t, size_t, double)> progress = {});
 
 // Append new kinds to preserve the numeric identifiers in existing projects.
 enum class ObjectKind { Lens, Mirror, Sphere, Box, Cylinder, Detector, Prism };
@@ -174,6 +208,14 @@ struct DetectorData {
     size_t hits = 0;
     double totalPower() const;
 };
+struct DetectorStatistics {
+    double power = 0, minimum = 0, maximum = 0, mean = 0, coefficientOfVariation = 0;
+    Vec3 centroid; // local detector coordinates, mm; moments use pixel centres
+    double rmsX = 0, rmsY = 0, rmsRadius = 0, radius50 = 0, radius80 = 0;
+    bool hasPower = false;
+    std::vector<double> x, y, marginalX, marginalY; // positions mm, integrated W/mm
+};
+DetectorStatistics detectorStatistics(const DetectorData&, double width, double height);
 struct SceneTrace {
     std::vector<DetectorData> detectors;
     std::vector<std::vector<Vec3>> paths;

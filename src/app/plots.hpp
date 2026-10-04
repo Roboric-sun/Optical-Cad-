@@ -18,7 +18,8 @@ enum class View {
     Longitudinal,
     FieldCurvature,
     ChromaticFocus,
-    GeometricMTF
+    GeometricMTF,
+    DetectorProfile
 };
 struct Results {
     Project project;
@@ -28,6 +29,7 @@ struct Results {
     optics::RayFan fan;
     std::array<optics::AnalysisCurve, 4> curves;
     std::optional<optics::SceneTrace> scene;
+    std::vector<optics::DetectorStatistics> detectorStats;
     QString error, waveError, fanError;
     int field = 0, selected = -1, detector = 0;
     QSet<int> hidden;
@@ -35,6 +37,9 @@ struct Results {
 };
 QString viewName(View);
 QByteArray rayFanCSV(const optics::RayFan&);
+QByteArray detectorProfileCSV(const optics::DetectorStatistics&);
+QByteArray detectorStatisticsCSV(const optics::DetectorData&, const optics::DetectorStatistics&,
+                                 double launchedPower, bool partial);
 class PlotWidget : public QWidget {
     Q_OBJECT
   public:
