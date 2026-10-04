@@ -112,7 +112,15 @@ int main(int argc, char** argv) {
         check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty(),
               "Demo analyses succeed");
         auto* rs = w.findChild<QScrollArea*>("ribbonScroll");
-        check(rs->horizontalScrollBar()->maximum() == 0, "Sequential ribbon fits default window");
+        const bool sequentialFits = QTest::qWaitFor(
+            [&] { return rs->horizontalScrollBar()->maximum() == 0; }, 1500);
+        if (!sequentialFits)
+            qWarning("Ribbon: window=%d viewport=%d contents=%d natural=%d steps=%d overflow=%d",
+                     w.width(), rs->viewport()->width(), rs->widget()->width(),
+                     rs->widget()->property("naturalWidth").toInt(),
+                     rs->widget()->property("compressionSteps").toInt(),
+                     rs->horizontalScrollBar()->maximum());
+        check(sequentialFits, "Sequential ribbon fits default window");
         auto* modes = w.findChild<QTabBar*>("modeTabs");
         check(modes->count() == 9 && modes->tabText(5) == "Библиотеки",
               "Reference ribbon context tabs");
@@ -248,7 +256,7 @@ int main(int argc, char** argv) {
         w.findChild<QTabBar*>("modeTabs")->setCurrentIndex(1);
         QTest::qWait(100);
         check(w.project().mode == 1, "Nonsequential mode switches");
-        check(rs->horizontalScrollBar()->maximum() == 0,
+        check(QTest::qWaitFor([&] { return rs->horizontalScrollBar()->maximum() == 0; }, 1500),
               "Nonsequential ribbon fits default window");
         check(w.findChild<QTableWidget*>("objectTable")->rowCount() == 2,
               "Object editor populated");

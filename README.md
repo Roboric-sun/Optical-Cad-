@@ -1,5 +1,7 @@
 # Optical CAD
 
+[![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
+
 Рабочая версия 0.3 оптической системы на C++20 с собственным расчётным ядром и русским интерфейсом Qt 6. Компоновка использует ленту двух режимов, навигатор, табличные редакторы и окна анализа из приложенных документов. Добавлены треугольные призмы, два среза лучевых аберраций и отображение лучей из нескольких источников. Полное соответствие Geopter и всему составу полноценного продукта ещё не достигнуто.
 
 ## Запуск на этом Mac
@@ -81,7 +83,7 @@ cmake --install build --config Release --prefix release
 .\scripts\build_windows.ps1 -QtRoot 'C:\Qt\<version>\msvc2022_64'
 ```
 
-Сборка macOS проверена на текущем ARM64 Mac с Qt 6.11.1. Windows-сборка в этой сессии не запускалась; её скрипт и CI подготовлены. GitHub workflow создаёт пакеты macOS/Windows после загрузки репозитория и запуска workflow; сейчас он не исполнялся.
+Сборка macOS проверена на текущем ARM64 Mac с Qt 6.11.1. GitHub Actions при каждом push и pull request собирает приложение с Qt 6.11.1 на macOS/Windows, запускает физические и интерфейсные тесты и сохраняет готовые пакеты в артефактах. Отдельная Linux-сборка проверяет ядро без Qt. [Результаты автосборок и доступные пакеты](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml) видны после входа в GitHub с доступом к закрытому репозиторию.
 
 Без интерфейса:
 

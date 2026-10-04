@@ -1,5 +1,7 @@
 #pragma once
 #include "math.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
