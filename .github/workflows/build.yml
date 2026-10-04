@@ -24,7 +24,7 @@ jobs:
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Deploy
-        run: cmake --install build --config Release --prefix release
+        run: cmake --install build --config Release --prefix "${{ github.workspace }}/release"
       - name: Verify standalone macOS package
         if: runner.os == 'macOS'
         run: python3 scripts/verify_macos_package.py release/optical_cad.app

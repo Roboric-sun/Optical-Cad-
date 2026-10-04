@@ -74,7 +74,7 @@ STEP/IGES, каталоги ОПАЛ, источники из измеренны
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
-cmake --install build --config Release --prefix release
+cmake --install build --config Release --prefix "$PWD/release"
 ```
 
 На macOS можно использовать `zsh scripts/build_macos.sh`, при необходимости задав `QT_ROOT`. Для Windows x64 нужен комплект Qt для MSVC 2022 и установленный Visual Studio с инструментами C++:

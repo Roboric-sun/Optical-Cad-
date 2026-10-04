@@ -7,6 +7,7 @@ cmake --build build-windows --config Release --parallel
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 ctest --test-dir build-windows -C Release --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
-cmake --install build-windows --config Release --prefix release/windows
+$task_install_root = Join-Path (Get-Location).Path "release/windows"
+cmake --install build-windows --config Release --prefix "$task_install_root"
 if ($LASTEXITCODE -ne 0) { throw "Deployment failed" }
 Write-Host "Готово: release/windows/bin/optical_cad.exe"
