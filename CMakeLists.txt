@@ -95,6 +95,11 @@ if(OPTICS_BUILD_GUI)
     qt_generate_deploy_app_script(TARGET optical_cad OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR)
     install(SCRIPT ${deploy_script})
     if(WIN32)
+      # windeployqt deploys qwindows by default, but isolated acceptance also
+      # exercises the application with the offscreen platform plugin.
+      find_file(OPTICS_OFFSCREEN_PLUGIN NAMES qoffscreen.dll
+        HINTS "${Qt6_DIR}/../../../plugins/platforms" NO_DEFAULT_PATH REQUIRED)
+      install(FILES "${OPTICS_OFFSCREEN_PLUGIN}" DESTINATION plugins/platforms)
       configure_file(cmake/package_windows.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/package_windows.cmake" @ONLY)
       install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/package_windows.cmake")
     endif()

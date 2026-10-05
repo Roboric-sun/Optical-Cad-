@@ -1,6 +1,6 @@
 # Optical CAD
 
-[![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
+[![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=codex%2Frelease-1-0)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
 
 Подготовленная к платформенной приёмке версия **1.0.0** оптической системы на C++20 с собственным расчётным ядром и русским интерфейсом Qt 6. Компоновка использует ленту двух режимов, навигатор, табличные редакторы и окна анализа из приложенных документов. Добавлены связи радиусов, кривизн и толщин, расчёт края и общей длины; работают настраиваемая оптимизация с границами переменных, редактор функции качества, профили и статистика детекторов. Есть руководство для начинающего C++ разработчика и консольный учебный пример. Призмы, лучевые аберрации и прежние расчёты сохранены. Полное соответствие Geopter и всему составу полноценного продукта ещё не достигнуто.
 

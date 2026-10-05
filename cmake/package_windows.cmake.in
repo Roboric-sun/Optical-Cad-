@@ -4,6 +4,16 @@ file(MAKE_DIRECTORY "${package}")
 file(COPY "${CMAKE_INSTALL_PREFIX}/bin" "${CMAKE_INSTALL_PREFIX}/examples"
     "${CMAKE_INSTALL_PREFIX}/docs" "${CMAKE_INSTALL_PREFIX}/scripts"
     "${CMAKE_INSTALL_PREFIX}/README.md" DESTINATION "${package}")
+foreach(runtime_directory plugins translations qml)
+    if(IS_DIRECTORY "${CMAKE_INSTALL_PREFIX}/${runtime_directory}")
+        file(COPY "${CMAKE_INSTALL_PREFIX}/${runtime_directory}" DESTINATION "${package}")
+    endif()
+endforeach()
+foreach(platform_plugin qwindows qoffscreen)
+    if(NOT EXISTS "${package}/plugins/platforms/${platform_plugin}.dll")
+        message(FATAL_ERROR "Windows ZIP is missing ${platform_plugin}.dll")
+    endif()
+endforeach()
 execute_process(COMMAND "@CMAKE_COMMAND@" -E tar cf "${package_name}.zip" --format=zip "${package_name}"
     WORKING_DIRECTORY "${CMAKE_INSTALL_PREFIX}" COMMAND_ERROR_IS_FATAL ANY)
 file(REMOVE_RECURSE "${package}")
