@@ -82,6 +82,9 @@ class Project:
     def diffraction(self, *, field=0, size=64, pupil_grid=None):
         return self._request("diffraction", field=field, size=size, pupil_grid=pupil_grid or size // 2 + 1)
 
+    def wavefront(self, *, field=0, pupil_grid=17):
+        return self._request("wavefront", field=field, pupil_grid=pupil_grid)
+
     def autofocus(self):
         return self._request("autofocus")["image_z_mm"]
 

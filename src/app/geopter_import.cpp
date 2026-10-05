@@ -298,7 +298,8 @@ QByteArray exportGeopter(const Project& project, bool preserveNative) {
         assembly[QString::number(i+1)] = row;
     }
     assembly[QString::number(s.surfaces.size()+1)] = QJsonObject{{"Type","SPH"},{"Label","Image"},
-        {"Curvature",0},{"Thickness",0},{"Material","AIR"}};
+        {"Curvature",0},{"Thickness",0},
+        {"Material",assembly[QString::number(s.surfaces.size())].toObject()["Material"]}};
     QJsonObject root{{"Title",QString::fromStdString(s.name)}, {"Note","Exported by Optical CAD; native constraints require OpticalCADExtension"}, {"Spec",spec}, {"Assembly",assembly}};
     if (preserveNative) root["OpticalCADExtension"] = QJsonObject{{"version",1},
         {"project",QJsonDocument::fromJson(serializeProject(project)).object()}};

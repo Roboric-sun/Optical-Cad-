@@ -13,6 +13,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt }}
@@ -34,6 +37,28 @@ jobs:
       - name: Verify standalone macOS package
         if: runner.os == 'macOS'
         run: python3 scripts/verify_macos_package.py release/optical_cad.app
+      - name: Accept deployed app in a fresh user directory
+        run: python scripts/verify_installation.py release artifacts/installation-${{ runner.os }}.json
+      - name: Independent Geopter and diffraction acceptance
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install numpy==2.3.5
+          python scripts/benchmarks/fetch_geopter.py reference/Geopter
+          python scripts/benchmarks/build_geopter_probe.py reference/Geopter reference/build
+          python scripts/benchmarks/compare_geopter.py reference/build/geopter_probe build/optics_batch artifacts/geopter
+          OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 python scripts/benchmarks/verify_diffraction.py reference/build/geopter_probe build/optics_batch artifacts/diffraction
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS' && always()
+        with:
+          name: independent-reference
+          path: |
+            artifacts/geopter/summary.json
+            artifacts/diffraction/summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installation-${{ matrix.os }}
+          path: artifacts/installation-*.json
       - uses: actions/upload-artifact@v4
         with:
           name: optical-cad-${{ matrix.os }}

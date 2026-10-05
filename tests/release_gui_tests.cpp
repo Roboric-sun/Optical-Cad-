@@ -40,6 +40,12 @@ size_t releaseGUIChecks(Window& window,const QString& dir) {
     auto finite=p;finite.system.solves.clear();finite.system.objectDistance=200;finite.system.stop=1;
     auto finitePlain=importGeopter(exportGeopter(finite,false));
     check(std::abs(finitePlain.system.pupilDiameter-finite.system.pupilDiameter)<1e-12,"Finite EPD export/import converts pupil planes reversibly");
+    Project immersed;
+    optics::Material exitMedium;exitMedium.name="EXIT_CONSTANT";exitMedium.nd=1.33;
+    immersed.catalog.add(exitMedium);immersed.system.surfaces.back().material=exitMedium.name;
+    const auto immersedJSON=QJsonDocument::fromJson(exportGeopter(immersed,false)).object()["Assembly"].toObject();
+    check(immersedJSON["3"].toObject()["Material"]==immersedJSON["2"].toObject()["Material"],
+          "Geopter image plane preserves exit medium without a fictitious AIR refraction");
     auto optimized=Project{};auto plan=defaultOptimization(optimized.system,optimized.catalog);
     plan.variables={{VariableParameter::A22,0,-1e-28,1e-28,1e-30}};optimized.optimization=plan;
     auto planRoundtrip=deserializeProject(serializeProject(optimized));

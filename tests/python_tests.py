@@ -40,6 +40,14 @@ with tempfile.TemporaryDirectory() as tmp:
     good.autofocus()
     d = good.diffraction(size=32)
     assert len(d["psf"]) == 1024 and abs(sum(d["psf"]) - 1) < 1e-10
+    wf = good.wavefront(pupil_grid=9)
+    assert len(wf["samples"]) == 49 and wf["rms_mm"] >= 0
+    for coordinates in ([], [["wrong", 0]], [[3, 0]]):
+        try:
+            good._request("trace_rays", pupils=coordinates)
+            raise AssertionError("Invalid pupil coordinates should fail")
+        except OpticalCADError:
+            pass
     scene = good.trace_scene()
     assert abs(scene["launched_w"]-sum(scene[k] for k in ("detected_w","absorbed_w","escaped_w","truncated_w"))) < 1e-9
 print("Python integration: load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")

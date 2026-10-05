@@ -113,9 +113,9 @@ Window::Window(QWidget* parent)
         setProject(Project{});
         path_.clear();
     });
-    action(file, "Открыть…", QKeySequence::Open, [this] { open(); });
-    action(file, "Сохранить", QKeySequence::Save, [this] { save(); });
-    action(file, "Сохранить как…", QKeySequence::SaveAs, [this] { save(true); });
+    action(file, "Открыть…", QKeySequence::Open, [this] { open(); })->setObjectName("openAction");
+    action(file, "Сохранить", QKeySequence::Save, [this] { save(); })->setObjectName("saveAction");
+    action(file, "Сохранить как…", QKeySequence::SaveAs, [this] { save(true); })->setObjectName("saveAsAction");
     file->addSeparator();
     action(file, "Выгрузить анализ в CSV…", {}, [this] { exportCSV(); });
     action(file, "Импорт Geopter JSON…", {}, [this] {

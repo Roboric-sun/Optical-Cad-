@@ -17,6 +17,9 @@ int main(int argc,char** argv) {
     nlohmann::json result;
     result["efl_mm"]=first->effective_focal_length;
     result["bfl_mm"]=first->back_focal_length;
+    result["exit_pupil_distance_mm"]=first->exit_pupil_distance;
+    result["image_distance_mm"]=first->image_distance;
+    result["exit_index"]=first->n_img;
     const auto wave=system.GetOpticalSpec()->GetWavelengthSpec()->ReferenceWavelength();
     result["wavelength_nm"]=wave;
     geopter::SequentialTrace trace(&system);
@@ -39,17 +42,23 @@ int main(int argc,char** argv) {
         for(const auto& row:input["rays"]) {
             const auto origin=row["origin_mm"].get<std::vector<double>>();
             const auto direction=row["direction"].get<std::vector<double>>();
-            system.GetOpticalAssembly()->GetGap(0)->SetThickness(-origin[2]);
-            system.UpdateModel();
+            if(system.GetOpticalAssembly()->GetGap(0)->Thickness()!=-origin[2]) {
+                system.GetOpticalAssembly()->GetGap(0)->SetThickness(-origin[2]);
+                system.UpdateModel();
+            }
             const auto path=trace.CreateSequentialPath(wave);
             auto ray=std::make_shared<geopter::Ray>(path.Size());
             trace.TraceRayThroughoutPath(ray,path,{origin[0],origin[1],0},{direction[0],direction[1],direction[2]});
             nlohmann::json item;item["status"]=int(ray->Status());item["points"]=nlohmann::json::array();
+            item["directions"]=nlohmann::json::array();
             double opl=0;
             for(int i=1;i<ray->NumberOfSegments();++i) {
                 auto* p=ray->GetSegmentAt(i);item["points"].push_back({p->X(),p->Y(),p->Z()});
+                item["directions"].push_back({p->L(),p->M(),p->N()});
                 if(i+1<ray->NumberOfSegments())opl+=p->OpticalPathLength();
             }
+            auto* exit=ray->GetSegmentAt(ray->NumberOfSegments()-2);
+            item["exit_direction"]={exit->L(),exit->M(),exit->N()};
             item["opl_mm"]=opl;result["matched_rays"].push_back(item);
         }
     }

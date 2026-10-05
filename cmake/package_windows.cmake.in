@@ -1,0 +1,9 @@
+set(package_name "OpticalCAD-@OPTICS_RELEASE_LABEL@-Windows-x64")
+set(package "${CMAKE_INSTALL_PREFIX}/${package_name}")
+file(MAKE_DIRECTORY "${package}")
+file(COPY "${CMAKE_INSTALL_PREFIX}/bin" "${CMAKE_INSTALL_PREFIX}/examples"
+    "${CMAKE_INSTALL_PREFIX}/docs" "${CMAKE_INSTALL_PREFIX}/scripts"
+    "${CMAKE_INSTALL_PREFIX}/README.md" DESTINATION "${package}")
+execute_process(COMMAND "@CMAKE_COMMAND@" -E tar cf "${package_name}.zip" --format=zip "${package_name}"
+    WORKING_DIRECTORY "${CMAKE_INSTALL_PREFIX}" COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE_RECURSE "${package}")

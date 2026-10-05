@@ -3,13 +3,21 @@
 #include <QDir>
 #include <QFile>
 #include <QTimer>
+int verifyInstallation(Window&, const QString&);
 
 int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i)
+        if (QString::fromLocal8Bit(argv[i]) == "--verify-installation")
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     QApplication::setApplicationName("Optical CAD");
     QApplication::setOrganizationName("OpticalCAD");
     Window window;
     const auto args = app.arguments();
+    if (args.contains("--verify-installation")) {
+        const int i = args.indexOf("--verify-installation");
+        return i + 1 < args.size() ? verifyInstallation(window, args[i + 1]) : 1;
+    }
     if (args.contains("--import-geopter")) {
         int i = args.indexOf("--import-geopter");
         if (i + 1 >= args.size())

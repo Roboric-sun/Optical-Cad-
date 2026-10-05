@@ -69,12 +69,27 @@ QJsonObject executeRequest(const QJsonObject& request) {
         QJsonArray rays;
         std::vector<Vec3> pupils{{0,0,0},{0,.5,0},{0,1,0}};
         if(options.contains("pupil_grid")) {
-            const int grid=option(options,"pupil_grid",9,3,33);pupils.clear();
+            const int grid=option(options,"pupil_grid",9,3,65);pupils.clear();
             for(int y=0;y<grid;++y)for(int x=0;x<grid;++x) {
                 Vec3 p{2.*x/(grid-1)-1,2.*y/(grid-1)-1,0};if(p.norm2()<=1+1e-12)pupils.push_back(p);
             }
         }
-        for(size_t fi=0;fi<system.fields.size();++fi) for(auto pupil:pupils) {
+        if (options.contains("pupils")) {
+            if (!options["pupils"].isArray()) throw std::invalid_argument("pupils must be an array");
+            const auto list = options["pupils"].toArray();
+            if (list.isEmpty() || list.size() > 15000) throw std::invalid_argument("Invalid pupil count");
+            pupils.clear();
+            for (const auto& value : list) {
+                const auto point = value.toArray();
+                if (point.size() != 2 || !point[0].isDouble() || !point[1].isDouble() ||
+                    std::abs(point[0].toDouble()) > 2 || std::abs(point[1].toDouble()) > 2)
+                    throw std::invalid_argument("Invalid pupil coordinate");
+                pupils.push_back({point[0].toDouble(), point[1].toDouble(), 0});
+            }
+        }
+        const size_t firstField=options.contains("field")?option(options,"field",0,0,int(system.fields.size())-1):0;
+        const size_t lastField=options.contains("field")?firstField+1:system.fields.size();
+        for(size_t fi=firstField;fi<lastField;++fi) for(auto pupil:pupils) {
             const auto launched=pupilRay(system,c,system.fields[fi],system.wavelengths[system.primary].um,pupil.x,pupil.y);
             const auto path=trace(system,c,launched,true,SIZE_MAX,false);
             QJsonArray points;
@@ -84,9 +99,18 @@ QJsonObject executeRequest(const QJsonObject& request) {
             }
             rays.append(QJsonObject{{"field",double(fi)},{"pupil_x",pupil.x},{"pupil_y",pupil.y},{"complete",path.status==TraceStatus::Complete},
                 {"points",points},{"opl_mm",path.opl},{"origin_mm",vector(launched.origin)},
-                {"direction",vector(launched.direction)},{"power",path.power}});
+                {"direction",vector(launched.direction)},{"power",path.power},
+                {"exit_point_mm",vector(path.exitPoint)},{"exit_direction",vector(path.exitDirection)},
+                {"image_mm",vector(path.image)},{"exit_index",path.index}});
         }
         result["rays"]=rays;
+    } else if(operation=="wavefront") {
+        const auto field=option(options,"field",0,0,int(s.fields.size())-1);
+        const auto grid=option(options,"pupil_grid",17,3,65);
+        const auto wf=wavefront(s,c,s.fields[field],grid);
+        QJsonArray samples;
+        for(const auto& point:wf.samples) samples.append(QJsonObject{{"pupil_x",point.px},{"pupil_y",point.py},{"opd_mm",point.opd},{"power",point.power}});
+        result={{"rms_mm",wf.rms},{"pv_mm",wf.pv},{"wavelength_um",wf.wavelength},{"samples",samples}};
     } else if(operation=="trace_scene") {
         const auto t=traceScene(project.scene,c);
         result={{"launched",double(t.launched)},{"launched_w",t.launchedPower},{"detected_w",t.detectedPower},
