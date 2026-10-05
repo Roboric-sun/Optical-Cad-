@@ -27,7 +27,7 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
     auto* layout = new QVBoxLayout(this);
     auto* form = new QFormLayout;
     auto* type = new QComboBox; type->setObjectName("fieldTypeCombo");
-    type->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    type->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм", "Реальная высота изображения, мм"});
     type->setCurrentIndex(int(project.system.fieldType)); form->addRow("Определение поля", type);
     auto* distance = new FieldDistanceBox; distance->setObjectName("fieldObjectDistance");
     distance->setDecimals(12); distance->setRange(0, 1e8); distance->setValue(project.system.objectDistance);

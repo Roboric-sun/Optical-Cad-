@@ -35,7 +35,7 @@ static Vec3 readVector(QJsonValue v) {
             throw std::invalid_argument("Invalid vector component");
     return {a[0].toDouble(), a[1].toDouble(), a[2].toDouble()};
 }
-static QJsonArray numbers(const std::array<double, 4>& a) {
+template <size_t N> static QJsonArray numbers(const std::array<double, N>& a) {
     QJsonArray j;
     for (double v : a)
         j.append(v);
@@ -62,27 +62,41 @@ static std::string string(QJsonObject o, const char* key) {
 }
 QByteArray serializeProject(const Project& p) {
     QJsonArray materials, surfaces, fields, waves, objects, sources;
-    for (auto& m : p.catalog.materials)
-        materials.append(QJsonObject{{"name", QString::fromStdString(m.name)},
+    bool extended = p.system.fieldType == FieldType::RealImageHeight;
+    if (p.optimization) for (const auto& variable : p.optimization->variables)
+        extended |= int(variable.parameter) > int(VariableParameter::Defocus);
+    for (auto& m : p.catalog.materials) {
+        QJsonObject row{{"name", QString::fromStdString(m.name)},
                                      {"b", triple(m.b)},
                                      {"c", triple(m.c)},
                                      {"nd", m.nd},
                                      {"vd", m.vd},
                                      {"minWavelength", m.minWavelength},
-                                     {"maxWavelength", m.maxWavelength}});
-    for (auto& s : p.system.surfaces)
-        surfaces.append(QJsonObject{{"name", QString::fromStdString(s.name)},
+                                     {"maxWavelength", m.maxWavelength}};
+        if (m.schottFormula) { row["schott"] = numbers(m.schott); extended = true; }
+        materials.append(row);
+    }
+    for (auto& s : p.system.surfaces) {
+        const bool extra = std::any_of(s.asphere.begin() + 4, s.asphere.end(), [](double v) { return v != 0; }) ||
+                           std::any_of(s.oddAsphere.begin(), s.oddAsphere.end(), [](double v) { return v != 0; });
+        extended |= extra;
+        auto coefficients = numbers(s.asphere);
+        if (!extra) while (coefficients.size() > 4) coefficients.removeLast();
+        QJsonObject row{{"name", QString::fromStdString(s.name)},
                                     {"kind", int(s.kind)},
                                     {"radius", s.radius},
                                     {"thickness", s.thickness},
                                     {"semiDiameter", s.semiDiameter},
                                     {"conic", s.conic},
-                                    {"asphere", numbers(s.asphere)},
+                                    {"asphere", coefficients},
                                     {"material", QString::fromStdString(s.material)},
                                     {"transmission", s.transmission},
                                     {"reflectivity", s.reflectivity},
                                     {"decenter", vector(s.decenter)},
-                                    {"tilt", vector(s.tilt)}});
+                                    {"tilt", vector(s.tilt)}};
+        if (extra) row["oddAsphere"] = numbers(s.oddAsphere);
+        surfaces.append(row);
+    }
     for (auto f : p.system.fields) {
         QJsonArray row{f.x, f.y, f.weight};
         if (hasVignetting(f))
@@ -159,7 +173,7 @@ QByteArray serializeProject(const Project& p) {
     if (s.fieldType != FieldType::Angle) seq["fieldType"] = int(s.fieldType);
     const bool vignetting = std::any_of(s.fields.begin(), s.fields.end(), hasVignetting);
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
+                                     {"version", extended ? 7 : s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -190,7 +204,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6 && root["version"] != 7))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -209,14 +223,23 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         m.vd = number(j, "vd");
         m.minWavelength = j["minWavelength"].toDouble(.2);
         m.maxWavelength = j["maxWavelength"].toDouble(5);
+        if (j.contains("schott")) {
+            const auto coefficients = j["schott"].toArray();
+            if (root["version"] != 7 || coefficients.size() != 6) throw std::invalid_argument("Schott dispersion requires format 7 and six coefficients");
+            m.schottFormula = true;
+            for (int i=0;i<6;++i) {
+                if (!coefficients[i].isDouble()) throw std::invalid_argument("Invalid Schott coefficient");
+                m.schott[i] = coefficients[i].toDouble();
+            }
+        }
         if (m.name != "AIR")
             p.catalog.add(m);
     }
     auto seq = root["sequential"].toObject();
     auto& s = p.system;
     if (seq.contains("fieldType")) {
-        if (root["version"] != 6) throw std::invalid_argument("Field type metadata requires format 6");
-        s.fieldType = FieldType(integer(seq, "fieldType", 2));
+        if (root["version"].toInt() < 6) throw std::invalid_argument("Field type metadata requires format 6 or newer");
+        s.fieldType = FieldType(integer(seq, "fieldType", root["version"] == 7 ? 3 : 2));
     } else if (root["version"] == 6) throw std::invalid_argument("Format 6 requires fieldType");
     s.name = string(seq, "name");
     s.surfaces.clear();
@@ -239,16 +262,25 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         surf.decenter = readVector(j["decenter"]);
         surf.tilt = readVector(j["tilt"]);
         auto a = j["asphere"].toArray();
-        if (a.size() != 4)
+        if (a.size() != 4 && !(root["version"] == 7 && a.size() == 10))
             throw std::invalid_argument("Invalid asphere array");
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < a.size(); ++i) {
             if (!a[i].isDouble())
                 throw std::invalid_argument("Invalid aspheric coefficient");
             surf.asphere[i] = a[i].toDouble();
         }
+        if (j.contains("oddAsphere")) {
+            auto odd = j["oddAsphere"].toArray();
+            if (root["version"] != 7 || odd.size() != 10) throw std::invalid_argument("Odd asphere requires format 7 and ten coefficients");
+            for (int i = 0; i < 10; ++i) {
+                if (!odd[i].isDouble()) throw std::invalid_argument("Invalid odd asphere coefficient");
+                surf.oddAsphere[i] = odd[i].toDouble();
+            }
+        }
         s.surfaces.push_back(surf);
     }
     if (seq.contains("solves")) {
+        if (root["version"] == 1) throw std::invalid_argument("Solves require project format 2 or newer");
         if (!seq["solves"].isArray() || seq["solves"].toArray().size() > 1000)
             throw std::invalid_argument("Invalid parameter solves table");
         for (auto val : seq["solves"].toArray()) {
@@ -352,7 +384,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             throw std::invalid_argument("Invalid optimization table");
         for (auto entry : j["variables"].toArray()) {
             auto v = entry.toObject();
-            plan.variables.push_back({VariableParameter(integer(v, "parameter", 7)),
+            plan.variables.push_back({VariableParameter(integer(v, "parameter", root["version"] == 7 ? int(VariableParameter::A21) : 7)),
                                       integer(v, "surface", 499), number(v, "lower"),
                                       number(v, "upper"), number(v, "step")});
         }

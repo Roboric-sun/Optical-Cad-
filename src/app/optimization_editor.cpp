@@ -15,6 +15,7 @@
 
 using namespace optics;
 QString parameterName(VariableParameter p) {
+    if (const int order = asphericOrder(p)) return QString("A%1, мм^(%2)").arg(order).arg(1-order);
     const QStringList names{"Радиус, мм", "Толщина, мм", "Коника", "A4, мм⁻³", "A6, мм⁻⁵",
                             "A8, мм⁻⁷", "A10, мм⁻⁹", "Дефокус, мм"};
     return names.value(int(p));
@@ -172,7 +173,7 @@ void OptimizationEditor::appendVariable(OptimizationVariable v) {
         surface->addItem(QString("%1 — %2").arg(i + 1).arg(QString::fromStdString(project_.system.surfaces[i].name)));
     surface->setCurrentIndex(int(v.surface));
     auto* parameter = new QComboBox;
-    for (int i = 0; i <= int(VariableParameter::Defocus); ++i)
+    for (int i = 0; i <= int(VariableParameter::A21); ++i)
         parameter->addItem(parameterName(VariableParameter(i)));
     parameter->setCurrentIndex(int(v.parameter));
     surface->setEnabled(v.parameter != VariableParameter::Defocus);
@@ -193,9 +194,9 @@ void OptimizationEditor::appendVariable(OptimizationVariable v) {
         v.surface = size_t(surface->currentIndex());
         surface->setEnabled(v.parameter != VariableParameter::Defocus);
         double value = variableValue(project_.system, v), range = std::max(1., std::abs(value) * .3);
-        if (v.parameter >= VariableParameter::A4 && v.parameter <= VariableParameter::A10) {
+        if (const int order = asphericOrder(v.parameter)) {
             const double aperture = std::max(1., project_.system.surfaces[v.surface].semiDiameter);
-            range = std::max(std::abs(value) * .3, .1 / std::pow(aperture, 4 + 2 * (int(v.parameter) - int(VariableParameter::A4))));
+            range = std::max(std::abs(value) * .3, .1 / std::pow(aperture, order));
         }
         cell(variables_, row, 2, value, false);
         cell(variables_, row, 3, v.parameter == VariableParameter::Thickness ? std::max(0., value - range) : value - range);

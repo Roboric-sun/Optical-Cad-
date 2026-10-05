@@ -5,6 +5,22 @@
 #include <algorithm>
 
 using namespace optics;
+static double finitePupilScale(const SequentialSystem& s, const Catalog& c) {
+    if (s.objectDistance <= 0) return 1;
+    double A=1, B=0, C=0, D=1, n=1;
+    const double w=s.wavelengths.at(s.primary).um;
+    for(size_t i=0;i<s.stop;++i) {
+        const auto& a=s.surfaces.at(i);
+        if(a.tilt.norm2() || a.decenter.norm2() || a.kind==SurfaceKind::Mirror)
+            throw std::invalid_argument("Geopter EPD conversion requires centered refractors");
+        const double next=a.kind==SurfaceKind::Stop?n:c.get(a.material).index(w);
+        const double power=a.radius==0?0:(next-n)/a.radius;
+        C-=power*A;D-=power*B;n=next;A+=a.thickness/n*C;B+=a.thickness/n*D;
+    }
+    if(std::abs(A)<1e-12 || std::abs(A+B/s.objectDistance)<1e-12)
+        throw std::invalid_argument("Geopter entrance pupil is at a singular conjugate");
+    return std::abs(A/(A+B/s.objectDistance));
+}
 static double value(QJsonObject j, QString key) {
     if (!j[key].isDouble() || !std::isfinite(j[key].toDouble()))
         throw std::invalid_argument(("Geopter: invalid " + key).toStdString());
@@ -16,6 +32,15 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     if (err.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid Geopter JSON");
     auto root = doc.object();
+    if (root.contains("OpticalCADExtension")) {
+        const auto extension = root.take("OpticalCADExtension").toObject();
+        if (extension["version"] != 1 || !extension["project"].isObject())
+            throw std::invalid_argument("Geopter: invalid Optical CAD extension");
+        auto native = deserializeProject(QJsonDocument(extension["project"].toObject()).toJson());
+        if (QJsonDocument::fromJson(exportGeopter(native, false)).object() != root)
+            throw std::invalid_argument("Geopter: standard geometry differs from native extension; remove the stale extension to import edited geometry");
+        return native;
+    }
     auto checkSolveMetadata = [](QJsonObject object, QString location) {
         // The pinned Geopter JSON writer has no solve records. Reject unrecognized
         // extensions carrying rules instead of silently importing their cached numbers.
@@ -42,10 +67,11 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
     checkSolveMetadata(assembly, "Assembly");
     for (auto it = assembly.begin(); it != assembly.end(); ++it)
         if (it.value().isObject()) checkSolveMetadata(it.value().toObject(), "Assembly." + it.key());
-    int pupilType = int(value(pupil, "Type"));
-    if (pupilType != 0 && pupilType != 1)
+    const double pupilTypeValue = value(pupil, "Type");
+    if (pupilTypeValue < 0 || pupilTypeValue > 3 || std::floor(pupilTypeValue) != pupilTypeValue)
         throw std::invalid_argument(
-            "Geopter: only entrance pupil diameter and f-number are supported");
+            "Geopter: invalid pupil type (expected EPD/FNO/NAO/NA)");
+    const int pupilType = int(pupilTypeValue);
     const double fieldType = value(field, "Type");
     if (fieldType < 0 || fieldType > 2 || std::floor(fieldType) != fieldType)
         throw std::invalid_argument("Geopter: unsupported field type");
@@ -120,22 +146,24 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
         if (a.name.empty())
             a.name = "Поверхность " + std::to_string(i);
         QString type = row["Type"].toString();
-        if (type != "SPH" && type != "ASP")
+        if (type != "SPH" && type != "ASP" && type != "ODD")
             throw std::invalid_argument("Geopter: unsupported surface type " + type.toStdString());
         double curvature = value(row, "Curvature");
         a.radius = curvature == 0 ? 0 : 1 / curvature;
         a.thickness = value(row, "Thickness");
-        if (type == "ASP") {
+        if (type == "ASP" || type == "ODD") {
             a.conic = value(row, "Conic");
+            if (!row["Coefs"].isArray()) throw std::invalid_argument("Geopter: missing aspheric coefficients");
             auto coefficients = row["Coefs"].toArray();
             for (int j = 0; j < coefficients.size(); ++j) {
                 if (!coefficients[j].isDouble())
                     throw std::invalid_argument("Geopter: invalid aspheric coefficient");
                 double v = coefficients[j].toDouble();
-                if (j < 4)
-                    a.asphere[j] = v;
-                else if (v != 0)
-                    throw std::invalid_argument("Geopter: aspheric orders above A10 unsupported");
+                const int power = type == "ASP" ? 4 + 2 * j : 3 + j;
+                if (power > 22) {
+                    if (v != 0) throw std::invalid_argument("Geopter: aspheric order above A22 unsupported");
+                } else if (power % 2) a.oddAsphere[(power - 3) / 2] = v;
+                else a.asphere[(power - 4) / 2] = v;
             }
         }
         QString name = row["Material"].toString();
@@ -168,9 +196,13 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
         explicitAperture.push_back(fixed);
         s.surfaces.push_back(a);
     }
-    if (pupilType == 1)
-        s.pupilDiameter =
-            std::abs(paraxial(s, p.catalog, s.wavelengths[s.primary].um).efl) / s.pupilDiameter;
+    if(pupilType==0) s.pupilDiameter *= finitePupilScale(s,p.catalog);
+    else if(pupilType==1) {
+        const auto matrix=paraxial(s,p.catalog,s.wavelengths[s.primary].um).matrix;
+        const double power=std::abs(matrix[2]+(s.objectDistance>0?matrix[3]/s.objectDistance:0));
+        if(power<1e-12 || s.pupilDiameter<=0) throw std::invalid_argument("Geopter: undefined working f-number");
+        s.pupilDiameter=1/(s.pupilDiameter*power);
+    } else s.pupilDiameter = apertureDiameter(s, p.catalog, ApertureType(pupilType), s.pupilDiameter);
     auto vertices = s.vertices();
     // Entrance pupil radius is not the clear radius of each internal surface.
     std::vector<double> inferred(s.surfaces.size(), 0);
@@ -202,4 +234,73 @@ Project importGeopter(const QByteArray& bytes, const Catalog& catalog) {
                                  "converted; absent clear apertures inferred from sampled ray "
                                  "envelopes; manual nd:Vd glass uses Cauchy approximation.";
     return p;
+}
+QByteArray exportGeopter(const Project& project, bool preserveNative) {
+    const auto s = resolvedSystem(project.system, project.catalog);
+    const auto errors = s.validate(project.catalog);
+    if (!errors.empty()) throw std::invalid_argument(errors.front());
+    if (s.fieldType == FieldType::RealImageHeight)
+        throw std::invalid_argument("Geopter does not define real image-height fields");
+    if(s.objectDistance>=1e7) throw std::invalid_argument("Geopter export: finite object distance conflicts with infinity convention");
+    QJsonArray x, y, weight, vux, vlx, vuy, vly, waves, weights, fieldColors, waveColors;
+    for (const auto& f : s.fields) {
+        x.append(f.x); y.append(f.y); weight.append(f.weight);
+        vux.append(f.vux); vlx.append(f.vlx); vuy.append(f.vuy); vly.append(f.vly);
+        fieldColors.append(QJsonArray{0,0,0,1});
+    }
+    for (const auto& w : s.wavelengths) { waves.append(w.um * 1000); weights.append(w.weight); waveColors.append(QJsonArray{0,0,0,1}); }
+    QJsonObject spec{{"Pupil", QJsonObject{{"Type", 0}, {"Value", s.pupilDiameter / finitePupilScale(s,project.catalog)}}},
+        {"Field", QJsonObject{{"Type", int(s.fieldType)}, {"X", x}, {"Y", y}, {"Weight", weight},
+                             {"VUX", vux}, {"VLX", vlx}, {"VUY", vuy}, {"VLY", vly}, {"Color",fieldColors}}},
+        {"Wvl", QJsonObject{{"RefIndex", double(s.primary)}, {"Value", waves}, {"Weight", weights}, {"Color",waveColors}}}};
+    QJsonObject assembly{{"Stop", double(s.stop + 1)},
+        {"0", QJsonObject{{"Type", "SPH"}, {"Label", "Object"}, {"Curvature", 0},
+                          {"Thickness", s.objectDistance > 0 ? s.objectDistance : 1e10}, {"Material", "AIR"}}}};
+    for (size_t i = 0; i < s.surfaces.size(); ++i) {
+        const auto& a = s.surfaces[i];
+        if (a.kind == SurfaceKind::Mirror || a.tilt.norm2() || a.decenter.norm2() || a.transmission != 1 || a.reflectivity != 1)
+            throw std::invalid_argument("Geopter export: mirror, pose or coating is not representable");
+        const auto& glass = project.catalog.get(a.material);
+        QString material = QString::fromStdString(a.material);
+        if (a.kind == SurfaceKind::Stop && i > 0) material = assembly[QString::number(i)].toObject()["Material"].toString();
+        else if (a.kind == SurfaceKind::Stop) material = "AIR";
+        else if (material != "AIR") {
+            const Catalog standard;
+            bool builtIn = false;
+            try {
+                const auto& original = standard.get(a.material);
+                builtIn = original.b == glass.b && original.c == glass.c && original.nd == glass.nd && original.vd == glass.vd && original.schottFormula == glass.schottFormula && original.schott == glass.schott;
+            } catch (const std::exception&) {}
+            if (!builtIn) {
+                if (glass.schottFormula || glass.b != std::array<double,3>{})
+                    throw std::invalid_argument("Geopter export: custom dispersive glass needs a shared catalog");
+                material = QString::number(glass.nd, 'g', 17) + ":" + QString::number(glass.vd, 'g', 17);
+            }
+        }
+        QJsonObject row{{"Type", "SPH"}, {"Label", QString::fromStdString(a.name)},
+            {"Curvature", a.radius == 0 ? 0 : 1 / a.radius},
+            {"Thickness", a.thickness + (i + 1 == s.surfaces.size() ? s.defocus : 0)},
+            {"Material", material}, {"Aperture", QJsonObject{{"Type", "Circular"}, {"Radius", a.semiDiameter}}}};
+        const bool odd = std::any_of(a.oddAsphere.begin(), a.oddAsphere.end(), [](double v) { return v != 0; });
+        const bool even = std::any_of(a.asphere.begin(), a.asphere.end(), [](double v) { return v != 0; });
+        if (odd || even || a.conic != 0) {
+            row["Type"] = odd ? "ODD" : "ASP"; row["Conic"] = a.conic;
+            QJsonArray coefficients;
+            if (odd) {
+                if (std::any_of(a.asphere.begin()+5,a.asphere.end(),[](double v){return v!=0;}) ||
+                    std::any_of(a.oddAsphere.begin()+5,a.oddAsphere.end(),[](double v){return v!=0;}))
+                    throw std::invalid_argument("Geopter ODD supports A3 through A12 only");
+                for (int power=3;power<=12;++power)
+                    coefficients.append(power%2 ? a.oddAsphere[(power-3)/2] : a.asphere[(power-4)/2]);
+            } else for(double v:a.asphere) coefficients.append(v);
+            row["Coefs"] = coefficients;
+        }
+        assembly[QString::number(i+1)] = row;
+    }
+    assembly[QString::number(s.surfaces.size()+1)] = QJsonObject{{"Type","SPH"},{"Label","Image"},
+        {"Curvature",0},{"Thickness",0},{"Material","AIR"}};
+    QJsonObject root{{"Title",QString::fromStdString(s.name)}, {"Note","Exported by Optical CAD; native constraints require OpticalCADExtension"}, {"Spec",spec}, {"Assembly",assembly}};
+    if (preserveNative) root["OpticalCADExtension"] = QJsonObject{{"version",1},
+        {"project",QJsonDocument::fromJson(serializeProject(project)).object()}};
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }

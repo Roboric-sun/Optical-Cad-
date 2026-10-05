@@ -54,7 +54,16 @@ def verify(bundle: Path) -> None:
             [str(bundle / "Contents/MacOS/optical_cad"), "--write-examples", output],
             env=environment, check=True, timeout=60,
         )
-        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height"):
+        batch = bundle / "Contents/MacOS/optics_batch"
+        request = {"operation": "analyze", "project": json.loads((Path(output) / "singlet.optcad").read_text())}
+        completed = subprocess.run([str(batch)], input=json.dumps(request), text=True,
+                                   capture_output=True, env=environment, check=True, timeout=60)
+        if not json.loads(completed.stdout).get("ok"):
+            raise RuntimeError("Packaged batch API failed")
+        sdk = bundle / "Contents/Resources/python/opticalcad.py"
+        if not sdk.is_file():
+            raise RuntimeError("Python SDK is missing from the application bundle")
+        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height", "real_image_height", "aspheric_singlet"):
             project = json.loads((Path(output) / f"{name}.optcad").read_text())
             if project["format"] != "optical-cad" or not project["sequential"]["surfaces"]:
                 raise RuntimeError(f"Invalid generated example: {name}")
@@ -82,9 +91,21 @@ def verify(bundle: Path) -> None:
                 or project["sequential"]["fieldType"] != (1 if name == "object_height" else 2)
             ):
                 raise RuntimeError("Height-field example is incomplete")
+            if name == "real_image_height" and (
+                project["version"] != 7 or project["sequential"]["fieldType"] != 3
+            ):
+                raise RuntimeError("Real image height example is incomplete")
+            if name == "aspheric_singlet" and (
+                project["version"] != 7
+                or len(project["sequential"]["surfaces"][0]["asphere"]) != 10
+                or project["sequential"]["surfaces"][1]["oddAsphere"][0] == 0
+                or not project["workspace"].get("polychromaticDiffraction")
+            ):
+                raise RuntimeError("Extended aspheric example is incomplete")
     # Validate companion files in the full ZIP too, not just the executable bundle.
     with (bundle / "Contents/Info.plist").open("rb") as plist:
-        version = plistlib.load(plist)["CFBundleVersion"]
+        metadata = plistlib.load(plist)
+        version = metadata.get("CFBundleShortVersionString", metadata["CFBundleVersion"])
     archive = bundle.parent / f"OpticalCAD-{version}-macOS-arm64.zip"
     if archive.exists():
         with zipfile.ZipFile(archive) as zipped:
@@ -94,11 +115,16 @@ def verify(bundle: Path) -> None:
                         "scripts/reference_doublet.py", "examples/marginal_focus.optcad",
                         "examples/geopter/kingslake_doublet.json", "examples/geopter/dbgauss.json",
                         "examples/vignetted_singlet.optcad", "examples/object_height.optcad",
-                        "examples/image_height.optcad", "docs/FIELDS_RU.md"]
+                        "examples/image_height.optcad", "docs/FIELDS_RU.md", "scripts/opticalcad.py",
+                        "docs/RELEASE_1_0_RU.md", "docs/PYTHON_API_RU.md",
+                        "docs/benchmarks/geopter-1.0-matched.json",
+                        "examples/real_image_height.optcad", "examples/aspheric_singlet.optcad",
+                        "optical_cad.app/Contents/Resources/python/opticalcad.py",
+                        "optical_cad.app/Contents/MacOS/optics_batch"]
             for relative in required:
                 if prefix + relative not in names:
                     raise RuntimeError(f"Missing companion file in {archive}: {relative}")
-    print(f"Package OK: {objects} Mach-O objects, local dependencies, nine generated examples.")
+    print(f"Package OK: {objects} Mach-O objects, local dependencies, eleven generated examples, batch API and Python SDK.")
 
 
 if __name__ == "__main__":

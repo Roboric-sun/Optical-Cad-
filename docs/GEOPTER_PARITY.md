@@ -1,3 +1,9 @@
+# Текущий статус: 1.0.0-rc1
+
+[Матрица реализации и условия сравнения](RELEASE_1_0_RU.md). Добавлены высшие/нечётные асферики, реальные высоты, определения NA, Schott, спектральный выходной зрачок, Python и экспорт. Прямое сравнение с исполняемым Geopter теперь выполнено для EFL/BFL, пересечений и OPL на пяти системах при одинаковых лучах и n. Полная дифракционная и платформенная приёмка ещё не завершена.
+
+Далее — историческая матрица 0.8.1 для сравнения изменений.
+
 # Приближение к Geopter
 
 Ориентир — публичный [Geopter](https://github.com/heterophyllus/Geopter), его [редакторы](https://github.com/heterophyllus/Geopter/tree/master/geopter/gui/SystemEditor), [окна анализа](https://github.com/heterophyllus/Geopter/tree/master/geopter/gui/AnalysisDlg) и [типы решений параметров](https://github.com/heterophyllus/Geopter/tree/master/geopter/optical/include/solve). Наличие одинаково названного анализа не доказывает численное совпадение. Непоследовательный режим нашего проекта развивается дополнительно по приложению Д пользователя.

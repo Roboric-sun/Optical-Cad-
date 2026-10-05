@@ -581,15 +581,17 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                        .arg(wave.rms * 1000 / wave.wavelength, 0, 'g', 4)
                        .arg(wave.pv * 1000 / wave.wavelength, 0, 'g', 4));
     } else if (view == View::MTF) {
-        if (!d.waveError.isEmpty()) {
-            p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.waveError);
+        if (!d.diffractionError.isEmpty()) {
+            p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.diffractionError);
             return;
         }
         auto& df = d.diffraction;
         if (df.frequency.empty())
             return;
         auto map = axes(0, df.frequency.back(), 0, 1, "Пространственная частота, пар линий/мм",
-                        "Скалярная монохроматическая MTF · X и Y");
+                        d.project.workspace["polychromaticDiffraction"].toBool(false)
+                            ? "Полихроматическая MTF · выходной зрачок · X/Y"
+                            : "Скалярная монохроматическая MTF · X и Y");
         for (int a = 0; a < 2; ++a) {
             QPolygonF line;
             auto& mtf = a ? df.mtfY : df.mtfX;
@@ -604,8 +606,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         double physicalX = 0, physicalY = 0;
         QString unit, summary;
         if (view == View::PSF) {
-            if (!d.waveError.isEmpty()) {
-                p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.waveError);
+            if (!d.diffractionError.isEmpty()) {
+                p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.diffractionError);
                 return;
             }
             auto& df = d.diffraction;

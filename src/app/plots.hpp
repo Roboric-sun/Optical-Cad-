@@ -30,7 +30,7 @@ struct Results {
     std::array<optics::AnalysisCurve, 4> curves;
     std::optional<optics::SceneTrace> scene;
     std::vector<optics::DetectorStatistics> detectorStats;
-    QString error, waveError, fanError;
+    QString error, waveError, diffractionError, fanError;
     int field = 0, selected = -1, detector = 0;
     QSet<int> hidden;
     size_t displayRays = 80;

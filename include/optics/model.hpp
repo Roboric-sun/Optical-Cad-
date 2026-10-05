@@ -13,6 +13,8 @@ struct Material {
     std::array<double, 3> b{}, c{};
     double nd = 1, vd = 0;
     double minWavelength = 0.2, maxWavelength = 5;
+    bool schottFormula = false;
+    std::array<double, 6> schott{}; // n² = a0 + a1 λ² + a2 λ^-2 + ... + a5 λ^-8
     double index(double wavelength_um) const;
 };
 class Catalog {
@@ -21,14 +23,15 @@ class Catalog {
     std::vector<Material> materials;
     const Material& get(const std::string& name) const;
     void add(Material material);
-    void importAGF(const std::string& text); // NM/CD: Sellmeier 1, formula 2
+    void importAGF(const std::string& text); // AGF Schott (1), Sellmeier 1 (2)
 };
 enum class SurfaceKind { Refract, Mirror, Stop };
 struct Surface {
     std::string name = "Поверхность";
     SurfaceKind kind = SurfaceKind::Refract;
     double radius = 0, thickness = 5, semiDiameter = 12.5, conic = 0;
-    std::array<double, 4> asphere{}; // A4 A6 A8 A10, mm powers
+    std::array<double, 10> asphere{}; // A4, A6, ... A22, mm powers
+    std::array<double, 10> oddAsphere{}; // A3, A5, ... A21, radial mm powers
     std::string material = "AIR";
     double transmission = 1, reflectivity = 1;
     Vec3 decenter, tilt;
@@ -37,7 +40,7 @@ struct Field {
     double x = 0, y = 0, weight = 1;
     double vux = 0, vlx = 0, vuy = 0, vly = 0; // shrink each signed pupil half, [0,1)
 };
-enum class FieldType { Angle, ObjectHeight, ParaxialImageHeight };
+enum class FieldType { Angle, ObjectHeight, ParaxialImageHeight, RealImageHeight };
 const char* fieldUnit(FieldType);
 bool validVignetting(const Field&);
 bool hasVignetting(const Field&);
@@ -122,6 +125,10 @@ struct Paraxial {
     std::array<double, 4> matrix{};
 };
 Paraxial paraxial(const SequentialSystem&, const Catalog&, double wavelength);
+enum class ApertureType { EntranceDiameter, FNumber, ObjectNA, ImageNA };
+// Convert a specification to the EPD stored in the model. NA = n sin(theta);
+// ray slopes are propagated with the primary-wave reduced-angle ABCD matrix.
+double apertureDiameter(const SequentialSystem&, const Catalog&, ApertureType, double value);
 double autofocus(SequentialSystem&, const Catalog&);
 struct SpotSample {
     double px = 0, py = 0, wavelength = 0;
@@ -149,6 +156,10 @@ struct Diffraction {
     std::vector<double> psf, frequency, mtfX, mtfY;
 };
 Diffraction diffraction(const SequentialSystem&, const Catalog&, Field, int size = 64);
+// Scalar exit-pupil quadrature, common physical image grid across all wavelengths.
+// Centered refractors, finite exit pupil, modest numerical aperture; throws outside model.
+Diffraction polychromaticDiffraction(const SequentialSystem&, const Catalog&, Field,
+                                    int size = 64, int pupilGrid = 33);
 struct AnalysisCurve {
     std::vector<double> x;
     std::vector<std::vector<double>> y;
@@ -165,15 +176,20 @@ AnalysisCurve longitudinalAberration(const SequentialSystem&, const Catalog&, in
 AnalysisCurve fieldCurvature(const SequentialSystem&, const Catalog&);
 AnalysisCurve chromaticFocus(const SequentialSystem&, const Catalog&, int samples = 41);
 AnalysisCurve geometricMTF(const Spot&, double maximumFrequency = 500, int samples = 101);
+AnalysisCurve encircledEnergy(const Spot&); // radius in mm about the energy centroid, cumulative fraction
+AnalysisCurve distortion(const SequentialSystem&, const Catalog&); // field radius, percent vs Gaussian chief
 struct OptimizationResult {
     double before = 0, after = 0;
     size_t evaluations = 0;
     std::vector<double> history;
     bool cancelled = false;
 };
-OptimizationResult optimizeRadii(SequentialSystem&, const Catalog&, size_t iterations = 12);
+OptimizationResult optimizeRadii(SequentialSystem&, const Catalog&, size_t iterations = 12,
+                                std::function<bool(size_t, size_t, double)> progress = {});
 
-enum class VariableParameter { Radius, Thickness, Conic, A4, A6, A8, A10, Defocus };
+enum class VariableParameter { Radius, Thickness, Conic, A4, A6, A8, A10, Defocus,
+    A12, A14, A16, A18, A20, A22, A3, A5, A7, A9, A11, A13, A15, A17, A19, A21 };
+int asphericOrder(VariableParameter);
 struct OptimizationVariable {
     VariableParameter parameter = VariableParameter::Radius;
     size_t surface = 0; // ignored for Defocus

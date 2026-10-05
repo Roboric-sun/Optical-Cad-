@@ -13,6 +13,7 @@ file(INSTALL DESTINATION "${bundle}/Contents/PlugIns/platforms" TYPE FILE
     FILES "${cocoa_plugin}" "${offscreen_plugin}")
 execute_process(COMMAND "@OPTICS_MACDEPLOYQT@" "${bundle}"
     -no-plugins -no-codesign -always-overwrite "-libpath=@OPTICS_QT_LIBS@"
+    "-executable=${bundle}/Contents/MacOS/optics_batch"
     "-executable=${bundle}/Contents/PlugIns/platforms/libqcocoa.dylib"
     "-executable=${bundle}/Contents/PlugIns/platforms/libqoffscreen.dylib"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
@@ -54,10 +55,10 @@ file(COPY "${bundle}" DESTINATION "${CMAKE_INSTALL_PREFIX}")
 # bundle verification even when the executable bytes are unchanged.
 execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${bundle}"
     "${CMAKE_INSTALL_PREFIX}/OpticalCAD-macOS-arm64.app.zip" COMMAND_ERROR_IS_FATAL ANY)
-set(package "${staging}/OpticalCAD-@PROJECT_VERSION@")
+set(package "${staging}/OpticalCAD-@OPTICS_RELEASE_LABEL@")
 file(MAKE_DIRECTORY "${package}")
 file(COPY "${bundle}" "${CMAKE_INSTALL_PREFIX}/examples" "${CMAKE_INSTALL_PREFIX}/docs"
     "${CMAKE_INSTALL_PREFIX}/README.md" "${CMAKE_INSTALL_PREFIX}/scripts" DESTINATION "${package}")
 execute_process(COMMAND /usr/bin/ditto -c -k --keepParent --norsrc "${package}"
-    "${CMAKE_INSTALL_PREFIX}/OpticalCAD-@PROJECT_VERSION@-macOS-arm64.zip" COMMAND_ERROR_IS_FATAL ANY)
+    "${CMAKE_INSTALL_PREFIX}/OpticalCAD-@OPTICS_RELEASE_LABEL@-macOS-arm64.zip" COMMAND_ERROR_IS_FATAL ANY)
 file(REMOVE_RECURSE "${staging}")

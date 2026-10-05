@@ -6,10 +6,18 @@
 #include <set>
 
 namespace optics {
+int asphericOrder(VariableParameter p) {
+    if (p >= VariableParameter::A4 && p <= VariableParameter::A10) return 4 + 2 * (int(p) - int(VariableParameter::A4));
+    if (p >= VariableParameter::A12 && p <= VariableParameter::A22) return 12 + 2 * (int(p) - int(VariableParameter::A12));
+    if (p >= VariableParameter::A3 && p <= VariableParameter::A21) return 3 + 2 * (int(p) - int(VariableParameter::A3));
+    return 0;
+}
 double variableValue(const SequentialSystem& s, const OptimizationVariable& v) {
     if (v.parameter == VariableParameter::Defocus)
         return s.defocus;
     const auto& surface = s.surfaces.at(v.surface);
+    const int order = asphericOrder(v.parameter);
+    if (order) return order % 2 ? surface.oddAsphere[(order-3)/2] : surface.asphere[(order-4)/2];
     switch (v.parameter) {
     case VariableParameter::Radius: return surface.radius;
     case VariableParameter::Thickness: return surface.thickness;
@@ -26,11 +34,17 @@ static void setVariable(SequentialSystem& s, const OptimizationVariable& v, doub
         return;
     }
     auto& surface = s.surfaces.at(v.surface);
+    const int order = asphericOrder(v.parameter);
+    if (order) {
+        if (order % 2) surface.oddAsphere[(order-3)/2] = value;
+        else surface.asphere[(order-4)/2] = value;
+        return;
+    }
     switch (v.parameter) {
     case VariableParameter::Radius: surface.radius = value; break;
     case VariableParameter::Thickness: surface.thickness = value; break;
     case VariableParameter::Conic: surface.conic = value; break;
-    default: surface.asphere[size_t(v.parameter) - size_t(VariableParameter::A4)] = value;
+    default: throw std::invalid_argument("Unknown optimization parameter");
     }
 }
 std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) const {
@@ -43,7 +57,7 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
     std::set<std::pair<int, size_t>> seen;
     for (auto& v : variables) {
         const bool defocus = v.parameter == VariableParameter::Defocus;
-        if (int(v.parameter) < 0 || int(v.parameter) > int(VariableParameter::Defocus) ||
+        if (int(v.parameter) < 0 || int(v.parameter) > int(VariableParameter::A21) ||
             (!defocus && v.surface >= s.surfaces.size()) || !std::isfinite(v.lower) ||
             !std::isfinite(v.upper) || !std::isfinite(v.step) || v.lower >= v.upper ||
             !std::isfinite(v.upper - v.lower) || v.step <= 0 || v.step > v.upper - v.lower)

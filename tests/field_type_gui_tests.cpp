@@ -32,7 +32,7 @@ size_t fieldTypeGUIChecks(Window& w, const QString& dir) {
     auto* type=d.findChild<QComboBox*>("fieldTypeCombo");
     auto* distance=d.findChild<QDoubleSpinBox*>("fieldObjectDistance");
     auto* table=d.findChild<QTableWidget*>("fieldTable");
-    check(type && type->count()==3 && distance,"Field editor exposes three definitions and object distance");
+    check(type && type->count()==4 && distance,"Field editor exposes four definitions and object distance");
     type->setCurrentIndex(1);
     check(table->horizontalHeaderItem(1)->text().contains("мм"),"Height selection updates visible coordinate units");
     accept(d);

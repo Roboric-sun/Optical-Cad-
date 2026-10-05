@@ -57,6 +57,7 @@ static bool paintedData(const QPixmap& pixmap) {
         }
     return false;
 }
+size_t releaseGUIChecks(Window&, const QString&);
 int main(int argc, char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
@@ -383,6 +384,7 @@ int main(int argc, char** argv) {
         checks += int(marginalGUIChecks(w, dir));
         checks += int(fieldGUIChecks(w, dir));
         checks += int(fieldTypeGUIChecks(w, dir));
+        checks += int(releaseGUIChecks(w, dir));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

@@ -4,6 +4,7 @@
 #include "optimization_editor.hpp"
 #include "solve_editor.hpp"
 #include "field_editor.hpp"
+#include "python_console.hpp"
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -154,18 +155,46 @@ Window::Window(QWidget* parent)
                 changeMode(0);
             addView(v);
         });
+    action(analysisMenu, "Переключить PSF/MTF: спектр / первичная волна", {}, [this] {
+        checkpoint();
+        project_.workspace["polychromaticDiffraction"] = !project_.workspace["polychromaticDiffraction"].toBool(false);
+        changed(false); recalculate();
+        status_->setText(project_.workspace["polychromaticDiffraction"].toBool()
+            ? "PSF/MTF: выходной зрачок, весь спектр, общая физическая сетка"
+            : "PSF/MTF: прежний FFT входного зрачка, первичная волна");
+    })->setObjectName("polychromaticAction");
+    action(file, "Экспорт Geopter JSON…", {}, [this] {
+        try {
+            const auto bytes = exportGeopter(project_);
+            const auto path = QFileDialog::getSaveFileName(this, "Экспорт Geopter", {}, "Geopter (*.json)");
+            if (path.isEmpty()) return;
+            QSaveFile output(path);
+            if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit())
+                throw std::runtime_error("Не удалось сохранить Geopter JSON");
+            status_->setText("Экспортировано. Связи сохранены в расширении Optical CAD; Geopter его не сохраняет.");
+        } catch (const std::exception& e) { error(e); }
+    })->setObjectName("exportGeopterAction");
+    action(help, "Python-консоль", {}, [this] {
+        auto* console = new PythonConsole(project_, [this, revision = revision_](Project p) mutable {
+            if (revision != revision_) throw std::runtime_error("Проект изменился — результат скрипта отклонён. Откройте новую консоль.");
+            if (serializeProject(p) == serializeProject(project_)) return;
+            checkpoint(); project_ = std::move(p); field_ = 0; selected_ = 0; changed();
+            changeMode(project_.mode); revision = revision_; recalculate();
+        }, this);
+        console->setAttribute(Qt::WA_DeleteOnClose); console->show();
+    })->setObjectName("pythonConsoleAction");
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.8.1",
+            this, "Optical CAD " OPTICS_RELEASE_LABEL,
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
-            "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
+            "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A3…A22, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
-            "монохроматические PSF и MTF, тангенциальные и сагиттальные ray "
+            "монохроматические и полихроматические PSF/MTF, Python-консоль, тангенциальные и сагиттальные ray "
             "fan, настраиваемая оптимизация.\n\nНепоследовательный: примитивы, линза и треугольные призмы, источники, "
             "отражение, преломление, диффузное рассеяние, детекторы и баланс "
             "мощности, профили и статистика пятна.\n\nSTEP/IGES, ОПАЛ, поляризация, смешанная трассировка и интеграция с САРУС "
             "ещё не реализованы. Вложенные и пересекающиеся прозрачные тела не "
-            "поддерживаются.\n\nPSF/MTF используют приближение Фраунгофера на входном зрачке и "
+            "поддерживаются.\n\nPSF/MTF: прежний FFT входного зрачка или спектральный выходной зрачок. Оба режима "
             "требуют центрированной системы; проверяйте его применимость. Каталожные модели без "
             "температуры/давления. Полное соответствие Geopter пока не подтверждено.");
     });
@@ -523,7 +552,8 @@ Window::Window(QWidget* parent)
                                "A4",
                                "A6",
                                "A8",
-                               "A10"});
+                               "A10", "A12", "A14", "A16", "A18", "A20", "A22",
+                               "A3", "A5", "A7", "A9", "A11", "A13", "A15", "A17", "A19", "A21"});
     configureTable(objects_, {"№", "Имя", "Тип", "Свойство", "X, мм", "Y, мм", "Z, мм", "Rx, °",
                               "Ry, °", "Rz, °", "Ширина, мм", "Высота, мм", "Длина, мм", "R1, мм",
                               "R2, мм", "Материал", "Отражение", "Nx", "Ny"});
@@ -1369,7 +1399,7 @@ void Window::rebuildEditors() {
     surfaces_->horizontalHeaderItem(2)->setText("Тип поверхности");
     surfaces_->horizontalHeaderItem(14)->setText(advancedSurfaces_ ? "Покрытие T" : "Покрытие");
     surfaces_->horizontalHeaderItem(11)->setText(advancedSurfaces_ ? "Rx, °" : "Наклон");
-    for (int c : {8, 9, 10, 12, 13, 15, 16, 17, 18, 19})
+    for (int c : {8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35})
         surfaces_->setColumnHidden(c, !advancedSurfaces_);
     surfaces_->setRowCount(s.surfaces.size() + 2);
     for (int row : {0, int(s.surfaces.size() + 1)})
@@ -1416,6 +1446,8 @@ void Window::rebuildEditors() {
                                  v.asphere[2],   v.asphere[3]};
         for (int c = 6; c < 20; ++c)
             set(surfaces_, r + 1, c, num(values[c - 6]));
+        for (int c = 20; c < 36; ++c)
+            set(surfaces_, r + 1, c, num(c < 26 ? v.asphere[c - 16] : v.oddAsphere[c - 26]));
         if (!advancedSurfaces_) {
             set(surfaces_, r + 1, 14,
                 v.transmission == 1 && v.reflectivity == 1
@@ -1766,9 +1798,13 @@ void Window::recalculate() {
                 }
                 try {
                     results_->wave = wavefront(project_.system, project_.catalog, f);
-                    results_->diffraction = diffraction(project_.system, project_.catalog, f);
+                } catch (const std::exception& e) { results_->waveError = str(e.what()); }
+                try {
+                    results_->diffraction = project_.workspace["polychromaticDiffraction"].toBool(false)
+                        ? polychromaticDiffraction(project_.system, project_.catalog, f)
+                        : diffraction(project_.system, project_.catalog, f);
                 } catch (const std::exception& e) {
-                    results_->waveError = str(e.what());
+                    results_->diffractionError = str(e.what());
                 }
                 results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);
                 results_->curves[1] = fieldCurvature(project_.system, project_.catalog);
@@ -1880,8 +1916,9 @@ void Window::editSurface(int r, int c) {
             dst = &candidate.reflectivity;
             break;
         default:
-            if (c >= 16 && c < 20)
+            if (c >= 16 && c < 26)
                 dst = &candidate.asphere[c - 16];
+            if (c >= 26 && c < 36) dst = &candidate.oddAsphere[c - 26];
         }
         if (!dst)
             return;
@@ -2221,7 +2258,8 @@ void Window::parameters() {
     form->addRow("Название", name);
     auto* type = new QComboBox;
     type->addItems({"Диаметр входного зрачка, мм", "Диафрагменное число f/#",
-                    "NA в пространстве изображения (параксиально)"});
+                    "NA объекта в воздухе (конечное сопряжение)",
+                    "NA изображения в выходной среде"});
     form->addRow("Апертура", type);
     auto* aperture = spin(s.pupilDiameter, .0001, 100000);
     form->addRow("Значение", aperture);
@@ -2241,7 +2279,7 @@ void Window::parameters() {
     }
     fields->setPlainText(fs);
     auto* fieldType = new QComboBox; fieldType->setObjectName("parameterFieldType");
-    fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм", "Реальная высота изображения, мм"});
     fieldType->setCurrentIndex(int(s.fieldType)); form->addRow("Определение поля", fieldType);
     form->addRow("Поля: X Y вес (единицы выбранного типа)\n[ VUX VLX VUY VLY ]", fields);
     auto* waves = new QTextEdit;
@@ -2297,22 +2335,8 @@ void Window::parameters() {
                 candidate.wavelengths.push_back({w, weight});
             }
             candidate.primary = primary->value() - 1;
-            candidate.pupilDiameter = aperture->value();
-            if (type->currentIndex() != 0) {
-                if (candidate.primary >= candidate.wavelengths.size())
-                    throw std::invalid_argument("Первичная волна не существует");
-                double f = std::abs(paraxial(candidate, project_.catalog,
-                                             candidate.wavelengths[candidate.primary].um)
-                                        .efl);
-                if (type->currentIndex() == 1)
-                    candidate.pupilDiameter = f / aperture->value();
-                else {
-                    double na = aperture->value();
-                    if (na >= 1)
-                        throw std::invalid_argument("NA должна быть меньше 1");
-                    candidate.pupilDiameter = 2 * f * tan(asin(na));
-                }
-            }
+            candidate.pupilDiameter = apertureDiameter(candidate, project_.catalog,
+                ApertureType(type->currentIndex()), aperture->value());
             applySolves(candidate, project_.catalog);
             auto errors = candidate.validate(project_.catalog);
             if (!errors.empty())
@@ -2586,7 +2610,8 @@ void Window::optimize(bool configured) {
         auto result = configured
             ? optics::optimize(project.system, project.catalog, *project.optimization,
                                [cancel](size_t, size_t, double) { return !cancel->load(); })
-            : optimizeRadii(project.system, project.catalog);
+            : optimizeRadii(project.system, project.catalog, 12,
+                            [cancel](size_t, size_t, double) { return !cancel->load(); });
         return std::make_pair(project.system, result);
     }));
 }
@@ -2884,6 +2909,18 @@ void Window::writeExamples(const QString& directory) {
     image.system.fields = {{0, 0, 1}, {0, 3, 1}, {0, 5, 1}};
     optics::autofocus(image.system, image.catalog);
     saveProject(directory + "/image_height.optcad", image);
+    image.system.name = "Линза — реальная высота изображения";
+    image.system.fieldType = FieldType::RealImageHeight;
+    saveProject(directory + "/real_image_height.optcad", image);
+    Project aspheric;
+    aspheric.system.name = "Линза — чётная и нечётная асферика";
+    aspheric.system.surfaces[0].asphere[4] = 1e-17;
+    aspheric.system.surfaces[1].oddAsphere[0] = 1e-7;
+    aspheric.system.pupilDiameter = 2;
+    aspheric.workspace["advancedSurfaceColumns"] = true;
+    aspheric.workspace["polychromaticDiffraction"] = true;
+    optics::autofocus(aspheric.system, aspheric.catalog);
+    saveProject(directory + "/aspheric_singlet.optcad", aspheric);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

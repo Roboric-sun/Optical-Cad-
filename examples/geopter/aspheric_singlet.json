@@ -1,0 +1,78 @@
+{
+  "Title": "Aspheric benchmark singlet",
+  "Note": "Original test fixture for this project",
+  "Spec": {
+    "Pupil": {
+      "Type": 0,
+      "Value": 4
+    },
+    "Field": {
+      "Type": 0,
+      "X": [
+        0,
+        0
+      ],
+      "Y": [
+        0,
+        3
+      ],
+      "Weight": [
+        1,
+        1
+      ]
+    },
+    "Wvl": {
+      "RefIndex": 0,
+      "Value": [
+        587.5618
+      ],
+      "Weight": [
+        1
+      ]
+    }
+  },
+  "Assembly": {
+    "0": {
+      "Type": "SPH",
+      "Label": "Object",
+      "Curvature": 0,
+      "Thickness": 100000000,
+      "Material": "AIR"
+    },
+    "1": {
+      "Type": "ASP",
+      "Label": "Front",
+      "Curvature": 0.02,
+      "Thickness": 5,
+      "Material": "N-BK7_SCHOTT",
+      "Conic": -0.5,
+      "Coefs": [
+        1e-06,
+        0,
+        0,
+        0,
+        1e-17,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "2": {
+      "Type": "SPH",
+      "Label": "Back",
+      "Curvature": -0.02,
+      "Thickness": 47.5,
+      "Material": "AIR"
+    },
+    "3": {
+      "Type": "SPH",
+      "Label": "Image",
+      "Curvature": 0,
+      "Thickness": 0,
+      "Material": "AIR"
+    },
+    "Stop": 1
+  }
+}
