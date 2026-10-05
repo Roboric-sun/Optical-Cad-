@@ -1,3 +1,22 @@
+# Приёмка 1.0.0 после rc1
+
+Локальный Release: **764 + 480 = 1244 физических/интерфейсных проверки**, плюс интеграция Python. Debug ASan/UBSan проходит все три группы CTest (58.50 с, `detect_leaks=0`). Новая GUI-регрессия проверяет отсутствие ложного AIR-перехода в Geopter экспорте выходной среды. Python проверяет OPD API и некорректные диагностические координаты.
+
+Независимый расчёт: `verify_diffraction.py` + внешний Geopter + NumPy 2.3.5, 7 схем × 3 волны × сетки 33/49/65. Все допуски пройдены; сходимость MTF 49→65 <0.00353, окна 32→64 <0.01487, энергетическая доля 0.98499…1.00016. [Протокол](benchmarks/diffraction-1.0.json), [методика/матрица](RELEASE_MATRIX_1_0_RU.md). Геометрический набор из пяти схем также повторно пройден.
+
+Реальный распакованный ZIP 1.0.0 прошёл `verify_installation.py`: временная папка, очищенные пути Qt/DYLD, настоящие команды GUI (edit/undo/redo/save/open), консоль Python и завершение её дочернего процесса, 11 примеров и спектральная PSF. Логи: `artifacts/v1.0/ctest-stable.log`, `ctest-sanitized-stable.log`, `installation-macOS.json`, `diffraction-independent.log`. Приёмка Windows/macOS CI подготовлена с временным скрытием Qt SDK и ожидает разрешения на отправку ветки в GitHub. Результат на другой ОС пока не заявляется. Ручное испытание другого пользовательского компьютера не выполнено.
+
+Воспроизведение:
+
+```sh
+ctest --test-dir build --output-on-failure
+python3 scripts/verify_installation.py release/macOS artifacts/installation.json
+python3 scripts/benchmarks/build_geopter_probe.py /path/to/Geopter /path/to/probe-build
+python3 scripts/benchmarks/verify_diffraction.py /path/to/probe-build/geopter_probe build/optics_batch artifacts/diffraction
+```
+
+Для последней команды нужен NumPy; для получения закреплённого внешнего исходника — `fetch_geopter.py` (Python 3.12+). Зависимости эталонного расчёта не нужны приложению и его SDK. Ниже сохранён протокол кандидата и более ранних выпусков.
+
 # Проверка версии 1.0.0-rc1
 
 Финальная локальная проверка 4 октября 2026 года на macOS ARM64: **764 физических + 479 интерфейсных/файловых = 1243 проверки**, дополнительно интеграционный набор Python. Все три группы CTest проходят в Release и Debug с AddressSanitizer/UndefinedBehaviorSanitizer. Release: 19.51 с; Debug с санитайзерами: 58.14 с. Проверка утечек отключена (`ASAN_OPTIONS=detect_leaks=0`); отсутствие утечек не подтверждалось. Отдельная сборка ядра без Qt также проходит физический набор.
