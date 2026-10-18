@@ -110,7 +110,7 @@ class Window : public QMainWindow {
     bool addSurface();
     void addLens();
     void moveSurface(int);
-    void autofocus();
+    void autofocus(bool allFields = false);
     void optimize(bool configured = false);
     void optimizationSettings();
     void rayReport();

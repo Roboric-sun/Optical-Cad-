@@ -50,4 +50,12 @@ with tempfile.TemporaryDirectory() as tmp:
             pass
     scene = good.trace_scene()
     assert abs(scene["launched_w"]-sum(scene[k] for k in ("detected_w","absorbed_w","escaped_w","truncated_w"))) < 1e-9
-print("Python integration: load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")
+    dls=Project.load(root / "examples/dls_focus.optcad",executable=binary)
+    optimized=dls.optimize()
+    assert optimized["algorithm"]==1 and len(optimized["starts"])==3 and optimized["after"]<optimized["before"]
+    assert all(b<=a for a,b in zip(optimized["history"],optimized["history"][1:]))
+    dls.save(tmp / "dls.optcad")
+    assert Project.load(tmp / "dls.optcad",executable=binary).data==dls.data
+    common=Project.load(root / "examples/singlet.optcad",executable=binary)
+    assert common.autofocus(all_fields=True,pupil_grid=9)>0
+print("Python integration: DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")

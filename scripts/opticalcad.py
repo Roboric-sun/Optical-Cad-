@@ -85,8 +85,8 @@ class Project:
     def wavefront(self, *, field=0, pupil_grid=17):
         return self._request("wavefront", field=field, pupil_grid=pupil_grid)
 
-    def autofocus(self):
-        return self._request("autofocus")["image_z_mm"]
+    def autofocus(self, *, all_fields=False, pupil_grid=17):
+        return self._request("autofocus", all_fields=all_fields, pupil_grid=pupil_grid)["image_z_mm"]
 
     def optimize(self):
         return self._request("optimize")

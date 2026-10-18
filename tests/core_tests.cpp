@@ -5,6 +5,7 @@
 
 using namespace optics;
 size_t optimizationChecks();
+size_t lmChecks();
 size_t solveChecks();
 size_t marginalChecks();
 size_t fieldChecks();
@@ -363,6 +364,7 @@ int main() {
                   "Every prism face closes the solid and blocks incident rays");
         }
         count += optimizationChecks();
+        count += lmChecks();
         count += solveChecks();
         count += marginalChecks();
         count += fieldChecks();

@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             sys.path.insert(0, str(package / "scripts"))
             from opticalcad import Project
             examples = sorted((package / "examples").glob("*.optcad"))
-            if len(examples) != 12:
-                raise RuntimeError(f"Expected 12 examples, found {len(examples)}")
+            if len(examples) != 13:
+                raise RuntimeError(f"Expected 13 examples, found {len(examples)}")
             for path in examples:
                 project = Project.load(path, executable=batch)
                 if not project.validate():
@@ -91,6 +91,15 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             if abs(sum(project.diffraction(size=32)["psf"]) - 1) >= 1e-10:
                 raise RuntimeError("Packaged diffraction is not normalized")
             result["batch_diffraction"] = True
+            dls=Project.load(package / "examples/dls_focus.optcad",executable=batch)
+            optimized=dls.optimize()
+            if optimized["algorithm"]!=1 or len(optimized["starts"])!=3 or not optimized["after"]<optimized["before"]:
+                raise RuntimeError("Packaged DLS optimization did not improve the example")
+            dls.save(base / "optimized.optcad")
+            if Project.load(base / "optimized.optcad",executable=batch).data!=dls.data:
+                raise RuntimeError("Optimized format 8 project did not reopen exactly")
+            dls.autofocus(all_fields=True,pupil_grid=9)
+            result["batch_dls"]=True
         except subprocess.TimeoutExpired as error:
             def decoded(value):
                 return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
@@ -105,4 +114,4 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not result.get("ok"):
         raise RuntimeError(result)
-    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 12 examples and spectral diffraction")
+    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 13 examples, DLS and spectral diffraction")

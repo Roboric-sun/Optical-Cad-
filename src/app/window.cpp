@@ -983,6 +983,9 @@ void Window::buildRibbon() {
         b = g->small(col, "optimize", "Оптимизация по настройкам",
                      [this] { optimize(true); }, "customOptimizeButton");
         b->setEnabled(!project_.mode);
+        auto* focusColumn=g->column();
+        b=g->small(focusColumn,"focus","Фокус: все поля и волны",[this]{autofocus(true);},"allFieldsFocusButton");
+        b->setEnabled(!project_.mode);
         g->small(col, "remove", "Остановить оптимизацию", [this] {
             optimizationCancel_->store(true);
         }, "cancelOptimizationButton");
@@ -2148,6 +2151,12 @@ void Window::moveSurface(int step) {
                 if (v.surface == size_t(selected_)) v.surface = size_t(to);
                 else if (v.surface == size_t(to)) v.surface = size_t(selected_);
             }
+    if(candidate.optimization) {
+        const auto mapped=[&](size_t i){return i==size_t(selected_) ? size_t(to) : i==size_t(to) ? size_t(selected_) : i;};
+        auto& operands=candidate.optimization->operands;
+        std::erase_if(operands,[&](const auto& o){return o.kind==MeritKind::EdgeThickness && mapped(o.surface+1)!=mapped(o.surface)+1;});
+        for(auto& o:operands)if(o.kind==MeritKind::EdgeThickness)o.surface=mapped(o.surface);
+    }
     reindexOptimization(candidate, 0, 0, 0);
     std::vector<size_t> map(s.surfaces.size() + 1);
     for (size_t i = 0; i < map.size(); ++i) map[i] = i;
@@ -2230,10 +2239,11 @@ void Window::addSource(SourceShape shape) {
     changed();
     editors_->setCurrentIndex(1);
 }
-void Window::autofocus() {
+void Window::autofocus(bool allFields) {
     try {
         auto candidate = project_.system;
-        optics::autofocus(candidate, project_.catalog);
+        if(allFields)optics::autofocusAllFields(candidate,project_.catalog,candidate.pupilGrid);
+        else optics::autofocus(candidate, project_.catalog);
         checkpoint();
         project_.system = candidate;
         changed();
@@ -2566,7 +2576,10 @@ void Window::optimize(bool configured) {
             if (configured) {
                 auto initial = project.system;
                 const auto& plan = *project.optimization;
-                if (plan.refocus) optics::autofocus(initial, project.catalog);
+                if (plan.refocus) {
+                    if(plan.allFieldsFocus)optics::autofocusAllFields(initial,project.catalog,plan.pupilGrid);
+                    else optics::autofocus(initial,project.catalog);
+                }
                 auto before = evaluateMerit(initial, project.catalog, plan);
                 auto after = evaluateMerit(result.first, project.catalog, plan);
                 report = QString("Безразмерная функция качества: %1 → %2\nПроверок вариантов: %3\n"
@@ -2574,6 +2587,9 @@ void Window::optimize(bool configured) {
                              .arg(result.second.before, 0, 'g', 10)
                              .arg(result.second.after, 0, 'g', 10)
                              .arg(result.second.evaluations).arg(plan.pupilGrid).arg(plan.iterations);
+                report=QString("Алгоритм: %1; стартов: %2\nЗавершение: %3\n")
+                    .arg(plan.algorithm==OptimizationAlgorithm::LevenbergMarquardt ? "DLS / Levenberg–Marquardt" : "Координатный поиск")
+                    .arg(plan.starts).arg(QString::fromStdString(result.second.termination))+report;
                 for (auto v : plan.variables)
                     report += QString("%1 · %2: %3 → %4 [%5…%6]\n")
                                   .arg(v.parameter == VariableParameter::Defocus ? "Система" : QString("S%1").arg(v.surface + 1))
@@ -2588,7 +2604,13 @@ void Window::optimize(bool configured) {
                                   .arg(before.values[i], 0, 'g', 12).arg(after.values[i], 0, 'g', 12)
                                   .arg(o.target, 0, 'g', 12).arg(o.scale, 0, 'g', 12).arg(o.weight, 0, 'g', 12);
                 }
-                report += "\nКритерий после каждого прохода:\n";
+                report += "\nСравнение стартов: до → после; проверок вариантов\n";
+                for(size_t i=0;i<result.second.starts.size();++i) {
+                    const auto& run=result.second.starts[i];
+                    report+=run.valid ? QString("%1: %2 → %3; %4\n").arg(i+1).arg(run.before,0,'g',10).arg(run.after,0,'g',10).arg(run.evaluations)
+                                      : QString("%1: недопустимая начальная геометрия\n").arg(i+1);
+                }
+                report += "\nЛучшая функция качества после проходов:\n";
                 for (size_t i = 0; i < result.second.history.size(); ++i)
                     report += QString("%1: %2\n").arg(i).arg(result.second.history[i], 0, 'g', 12);
             } else {
@@ -2965,6 +2987,14 @@ void Window::writeExamples(const QString& directory) {
     optics::autofocus(aspheric.system, aspheric.catalog);
     saveProject(directory + "/aspheric_singlet.optcad", aspheric);
     saveProject(directory + "/gullstrand_eye.optcad", gullstrandEyeProject());
+    auto dls=Project{}; dls.system.name="DLS — фокусировка и форма линзы";
+    optics::autofocus(dls.system,dls.catalog);dls.system.surfaces.back().thickness+=4;
+    auto plan=defaultOptimization(dls.system,dls.catalog);
+    plan.algorithm=OptimizationAlgorithm::LevenbergMarquardt;plan.starts=3;
+    plan.variables.push_back({VariableParameter::Thickness,dls.system.surfaces.size()-1,35,65,1});
+    std::erase_if(plan.variables,[](const auto& v){return v.parameter==VariableParameter::Defocus;});
+    dls.optimization=plan;
+    saveProject(directory+"/dls_focus.optcad",dls);
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

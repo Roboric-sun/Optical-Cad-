@@ -133,6 +133,8 @@ enum class ApertureType { EntranceDiameter, FNumber, ObjectNA, ImageNA };
 // ray slopes are propagated with the primary-wave reduced-angle ABCD matrix.
 double apertureDiameter(const SequentialSystem&, const Catalog&, ApertureType, double value);
 double autofocus(SequentialSystem&, const Catalog&);
+// Weighted polychromatic geometric RMS, separate centroid for each field.
+double autofocusAllFields(SequentialSystem&, const Catalog&, int pupilGrid = 17);
 struct SpotSample {
     double px = 0, py = 0, wavelength = 0;
     Vec3 image;
@@ -181,11 +183,18 @@ AnalysisCurve chromaticFocus(const SequentialSystem&, const Catalog&, int sample
 AnalysisCurve geometricMTF(const Spot&, double maximumFrequency = 500, int samples = 101);
 AnalysisCurve encircledEnergy(const Spot&); // radius in mm about the energy centroid, cumulative fraction
 AnalysisCurve distortion(const SequentialSystem&, const Catalog&); // field radius, percent vs Gaussian chief
+struct OptimizationStart {
+    double before = 0, after = 0;
+    size_t evaluations = 0;
+    bool valid = false;
+};
 struct OptimizationResult {
     double before = 0, after = 0;
     size_t evaluations = 0;
     std::vector<double> history;
     bool cancelled = false;
+    std::string termination;
+    std::vector<OptimizationStart> starts;
 };
 OptimizationResult optimizeRadii(SequentialSystem&, const Catalog&, size_t iterations = 12,
                                 std::function<bool(size_t, size_t, double)> progress = {});
@@ -198,12 +207,17 @@ struct OptimizationVariable {
     size_t surface = 0; // ignored for Defocus
     double lower = 0, upper = 1, step = .1;
 };
-enum class MeritKind { SpotRMS, EFL, BFL, ImageDistance, CentroidX, CentroidY, Throughput };
+enum class MeritKind { SpotRMS, EFL, BFL, ImageDistance, CentroidX, CentroidY, Throughput,
+    WavefrontRMS, MTFX, MTFY, Distortion, TotalTrack, EdgeThickness };
 struct MeritOperand {
     MeritKind kind = MeritKind::SpotRMS;
     int field = -1; // -1: weighted mean of squared residuals across all fields
     double target = 0, scale = 1, weight = 1;
+    double frequency = 50; // MTF: cycles/mm, interpolated on the 64-pixel physical grid
+    size_t surface = 0; // EdgeThickness: gap after this surface
+    double height = 1; // EdgeThickness: radial coordinate, mm
 };
+enum class OptimizationAlgorithm { Coordinate, LevenbergMarquardt };
 struct OptimizationPlan {
     std::vector<OptimizationVariable> variables;
     std::vector<MeritOperand> operands;
@@ -211,11 +225,15 @@ struct OptimizationPlan {
     int pupilGrid = 9;
     double minimumThroughput = .85; // geometric survival, checked for every field
     bool refocus = false;
+    OptimizationAlgorithm algorithm = OptimizationAlgorithm::Coordinate; // legacy files retain their method
+    size_t starts = 1; // deterministic starts, including the current system
+    bool allFieldsFocus = false; // when refocus is enabled
     std::vector<std::string> validate(const SequentialSystem&) const;
 };
 struct MeritEvaluation {
     double score = 0; // dimensionless weighted RMS of (value-target)/scale
     std::vector<double> values, contributions;
+    std::vector<double> residuals; // squared Euclidean norm equals score²
 };
 double variableValue(const SequentialSystem&, const OptimizationVariable&);
 OptimizationPlan defaultOptimization(const SequentialSystem&, const Catalog&);

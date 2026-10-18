@@ -23,7 +23,8 @@ QString parameterName(VariableParameter p) {
 }
 QString meritName(MeritKind k) {
     const QStringList names{"RMS пятна, мм", "EFL, мм", "BFL, мм", "Изображение Z, мм",
-                            "Центр X, мм", "Центр Y, мм", "Пропускание, 0…1"};
+                            "Центр X, мм", "Центр Y, мм", "Пропускание, 0…1", "RMS OPD всех волн, мм", "MTF X, 0…1", "MTF Y, 0…1",
+                            "Дисторсия, %", "Длина до последней поверхности, мм", "Толщина края, мм"};
     return names.value(int(k));
 }
 static void cell(QTableWidget* table, int row, int col, double value, bool editable = true) {
@@ -36,19 +37,20 @@ static double readCell(const QTableWidget* table, int row, int col) {
     const auto* item = table->item(row, col);
     double v = item ? uiNumber(item->text(), &valid) : 0;
     if (!valid || !std::isfinite(v))
-        throw std::invalid_argument("В таблице нужно конечное число (десятичный разделитель — точка)");
+        throw std::invalid_argument("В таблице нужно конечное число (десятичный разделитель — точка или запятая)");
     return v;
 }
 OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
     : QDialog(parent), project_(project) {
     setObjectName("optimizationDialog");
     setWindowTitle("Переменные и функция качества");
-    resize(1020, 660);
+    resize(1180, 740);
     auto* layout = new QVBoxLayout(this);
     auto* explanation = new QLabel(
         "Критерий = √(Σ вес × ((значение − цель) / масштаб)² / Σ вес). "
         "Для «Всех полей» квадраты отклонений усредняются с весами полей. "
-        "RMS и центры учитывают все длины волн и их веса.");
+        "RMS и центры учитывают все длины волн и их веса; OPD — отдельные невязки волн. "
+        "MTF — полихроматическая, частота в циклах/мм, сетка зрачка 33. Для края задайте поверхность и высоту в мм.");
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
     auto* tabs = new QTabWidget;
@@ -87,8 +89,14 @@ OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
         {"Поверхность", "Параметр", "Сейчас", "Минимум", "Максимум", "Начальный шаг"},
         variables_, "optimizationVariables");
     auto* addOperand = makePage("Функция качества",
-        {"Критерий", "Поле", "Цель", "Масштаб", "Вес", "Значение", "Вклад"},
+        {"Критерий", "Поле", "Цель", "Масштаб", "Вес", "Значение", "Вклад", "Частота MTF", "Грань края", "Высота края"},
         operands_, "meritOperands");
+    operands_->horizontalHeader()->setSectionResizeMode(0,QHeaderView::Interactive);
+    operands_->horizontalHeader()->setSectionResizeMode(1,QHeaderView::Interactive);
+    operands_->setColumnWidth(0,210);operands_->setColumnWidth(1,140);
+    operands_->horizontalHeaderItem(7)->setToolTip("Пространственная частота полихроматической MTF, циклы/мм; сетка зрачка 33");
+    operands_->horizontalHeaderItem(8)->setToolTip("Номер поверхности перед промежутком; следующая поверхность образует вторую границу края");
+    operands_->horizontalHeaderItem(9)->setToolTip("Радиальная высота края, мм");
     connect(addVariable, &QPushButton::clicked, this, [this] {
         if (variables_->rowCount() < 64)
             appendVariable({VariableParameter::Thickness, 0, 0, 100, .25});
@@ -99,6 +107,16 @@ OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
     auto p = project.optimization.value_or(defaultOptimization(project.system, project.catalog));
     for (auto v : p.variables) appendVariable(v);
     for (auto o : p.operands) appendOperand(o);
+    auto* methodRow=new QHBoxLayout;
+    algorithm_=new QComboBox;algorithm_->setObjectName("optimizationAlgorithm");
+    algorithm_->addItems({"Координатный поиск", "DLS / Levenberg–Marquardt"});
+    algorithm_->setCurrentIndex(int(p.algorithm));
+    starts_=new QSpinBox;starts_->setObjectName("optimizationStarts");starts_->setRange(1,8);starts_->setValue(int(p.starts));
+    allFieldsFocus_=new QCheckBox("Фокус по всем полям и волнам");
+    allFieldsFocus_->setObjectName("optimizationAllFieldsFocus");allFieldsFocus_->setChecked(p.allFieldsFocus);
+    methodRow->addWidget(new QLabel("Алгоритм"));methodRow->addWidget(algorithm_);
+    methodRow->addWidget(new QLabel("Стартов"));methodRow->addWidget(starts_);
+    methodRow->addWidget(allFieldsFocus_);methodRow->addStretch();layout->addLayout(methodRow);
     auto* controls = new QHBoxLayout;
     iterations_ = new QSpinBox;
     iterations_->setObjectName("optimizationIterations");
@@ -118,7 +136,12 @@ OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
     refocus_ = new QCheckBox("Автофокус");
     refocus_->setObjectName("optimizationRefocus");
     refocus_->setChecked(p.refocus);
-    refocus_->setToolTip("Минимум геометрического RMS первого поля на первичной волне. Последняя толщина и дефокус должны быть исключены из переменных.");
+    refocus_->setToolTip("Последняя толщина и дефокус должны быть исключены из переменных. Без общего фокуса — первое поле/первичная волна; с ним — минимум взвешенной суммы RMS² всех полей и волн.");
+    allFieldsFocus_->setEnabled(p.refocus);
+    connect(refocus_,&QCheckBox::toggled,allFieldsFocus_,&QCheckBox::setEnabled);
+    connect(algorithm_,&QComboBox::currentIndexChanged,this,[this]{invalidatePreview();});
+    connect(starts_,&QSpinBox::valueChanged,this,[this]{invalidatePreview();});
+    connect(allFieldsFocus_,&QCheckBox::toggled,this,[this]{invalidatePreview();});
     for (auto pair : {std::pair<QString, QWidget*>{"Проходов", iterations_},
                      {"Сетка зрачка", grid_}, {"Доля дошедших ≥", survival_}}) {
         controls->addWidget(new QLabel(pair.first));
@@ -159,7 +182,7 @@ OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
         if (item->column() >= 3) invalidatePreview();
     });
     connect(operands_, &QTableWidget::itemChanged, this, [this](auto* item) {
-        if (item->column() >= 2 && item->column() <= 4) invalidatePreview();
+        if ((item->column() >= 2 && item->column() <= 4) || item->column() >= 7) invalidatePreview();
     });
     connect(iterations_, &QSpinBox::valueChanged, this, [this] { invalidatePreview(); });
     connect(grid_, &QSpinBox::valueChanged, this, [this] { invalidatePreview(); });
@@ -211,8 +234,8 @@ void OptimizationEditor::appendOperand(MeritOperand o) {
     int row = operands_->rowCount();
     operands_->insertRow(row);
     auto* kind = new QComboBox;
-    for (int i = 0; i <= int(MeritKind::Throughput); ++i) {
-        kind->addItem(meritName(MeritKind(i)));
+    for (int i = 0; i <= int(MeritKind::EdgeThickness); ++i) {
+        kind->addItem(MeritKind(i)==MeritKind::TotalTrack ? "Длина системы, мм" : meritName(MeritKind(i)));
         kind->setItemData(i, meritName(MeritKind(i)), Qt::ToolTipRole);
     }
     kind->setCurrentIndex(int(o.kind));
@@ -225,7 +248,7 @@ void OptimizationEditor::appendOperand(MeritOperand o) {
     field->setCurrentIndex(o.field + 1);
     auto enableField = [kind, field] {
         auto k = MeritKind(kind->currentIndex());
-        field->setEnabled(k != MeritKind::EFL && k != MeritKind::BFL && k != MeritKind::ImageDistance);
+        field->setEnabled(k != MeritKind::EFL && k != MeritKind::BFL && k != MeritKind::ImageDistance && k != MeritKind::TotalTrack && k != MeritKind::EdgeThickness);
     };
     enableField();
     connect(kind, &QComboBox::currentIndexChanged, this, enableField);
@@ -236,6 +259,20 @@ void OptimizationEditor::appendOperand(MeritOperand o) {
     cell(operands_, row, 2, o.target);
     cell(operands_, row, 3, o.scale);
     cell(operands_, row, 4, o.weight);
+    cell(operands_, row, 7, o.frequency);cell(operands_, row, 8, double(o.surface+1));cell(operands_, row, 9, o.height);
+    auto enableParameters=[this,kind] {
+        // Find the row by its live widget, since rows may be deleted.
+        int current=-1;for(int r=0;r<operands_->rowCount();++r)if(operands_->cellWidget(r,0)==kind)current=r;
+        if(current<0)return;
+        const auto k=MeritKind(kind->currentIndex());
+        for(int column:{7,8,9}) {
+            auto* item=operands_->item(current,column);
+            const bool enabled=column==7 ? k==MeritKind::MTFX || k==MeritKind::MTFY : k==MeritKind::EdgeThickness;
+            auto flags=item->flags();if(enabled)flags|=Qt::ItemIsEditable;else flags&=~Qt::ItemIsEditable;
+            item->setFlags(flags);item->setForeground(enabled ? QColor("#20364d") : QColor("#687b8e"));
+        }
+    };
+    enableParameters();connect(kind,&QComboBox::currentIndexChanged,this,enableParameters);
     for (int c : {5, 6}) {
         cell(operands_, row, c, 0, false);
         operands_->item(row, c)->setText("—");
@@ -247,6 +284,8 @@ OptimizationPlan OptimizationEditor::plan() const {
     p.pupilGrid = grid_->value();
     p.minimumThroughput = survival_->value();
     p.refocus = refocus_->isChecked();
+    p.algorithm=OptimizationAlgorithm(algorithm_->currentIndex());p.starts=size_t(starts_->value());
+    p.allFieldsFocus=allFieldsFocus_->isChecked();
     for (int r = 0; r < variables_->rowCount(); ++r) {
         auto* parameter = qobject_cast<QComboBox*>(variables_->cellWidget(r, 1));
         auto* surface = qobject_cast<QComboBox*>(variables_->cellWidget(r, 0));
@@ -259,6 +298,14 @@ OptimizationPlan OptimizationEditor::plan() const {
         auto* field = qobject_cast<QComboBox*>(operands_->cellWidget(r, 1));
         p.operands.push_back({MeritKind(kind->currentIndex()), field->isEnabled() ? field->currentIndex() - 1 : -1,
                               readCell(operands_, r, 2), readCell(operands_, r, 3), readCell(operands_, r, 4)});
+        auto& operand=p.operands.back();
+        if(operand.kind==MeritKind::MTFX || operand.kind==MeritKind::MTFY)operand.frequency=readCell(operands_,r,7);
+        if(operand.kind==MeritKind::EdgeThickness) {
+            const double surface=readCell(operands_,r,8);
+            if(surface<1 || surface>double(project_.system.surfaces.size()-1) || std::floor(surface)!=surface)
+                throw std::invalid_argument("Для края выберите номер поверхности перед промежутком");
+            operand.surface=size_t(surface)-1;operand.height=readCell(operands_,r,9);
+        }
     }
     return p;
 }
@@ -271,7 +318,10 @@ void OptimizationEditor::preview() {
         auto errors = p.validate(system);
         if (errors.empty()) errors = system.validate(project_.catalog);
         if (!errors.empty()) throw std::invalid_argument(errors.front());
-        if (p.refocus) autofocus(system, project_.catalog);
+        if (p.refocus) {
+            if(p.allFieldsFocus)autofocusAllFields(system,project_.catalog,p.pupilGrid);
+            else autofocus(system,project_.catalog);
+        }
         auto result = evaluateMerit(system, project_.catalog, p);
         for (int r = 0; r < operands_->rowCount(); ++r) {
             cell(operands_, r, 5, result.values[r], false);

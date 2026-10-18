@@ -16,12 +16,21 @@ void reindexOptimization(Project& p, size_t at, size_t removed, size_t inserted)
     for (auto& v : variables)
         if (v.parameter != VariableParameter::Defocus && v.surface >= at + removed)
             v.surface = v.surface - removed + inserted;
+    auto& operands=p.optimization->operands;
+    std::erase_if(operands,[&](const auto& o) {
+        if(o.kind!=MeritKind::EdgeThickness)return false;
+        const bool deleted=removed && (o.surface<at+removed && o.surface+1>=at);
+        const bool split=inserted && at==o.surface+1;
+        return deleted || split;
+    });
+    for(auto& o:operands)if(o.kind==MeritKind::EdgeThickness && o.surface>=at+removed)
+        o.surface=o.surface-removed+inserted;
     if (p.optimization->refocus)
         std::erase_if(variables, [&](auto v) {
             return v.parameter == VariableParameter::Defocus ||
                    (v.parameter == VariableParameter::Thickness && v.surface + 1 == p.system.surfaces.size());
         });
-    if (variables.empty()) p.optimization.reset();
+    if (variables.empty() || operands.empty()) p.optimization.reset();
 }
 static QJsonArray vector(Vec3 v) {
     return {v.x, v.y, v.z};
@@ -172,8 +181,14 @@ QByteArray serializeProject(const Project& p) {
     });
     if (s.fieldType != FieldType::Angle) seq["fieldType"] = int(s.fieldType);
     const bool vignetting = std::any_of(s.fields.begin(), s.fields.end(), hasVignetting);
+    bool modernOptimization=false;
+    if(p.optimization) {
+        const auto& plan=*p.optimization;
+        modernOptimization=plan.algorithm!=OptimizationAlgorithm::Coordinate || plan.starts!=1 || plan.allFieldsFocus;
+        for(const auto& o:plan.operands)modernOptimization|=int(o.kind)>int(MeritKind::Throughput);
+    }
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", extended ? 7 : s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
+                                     {"version", modernOptimization ? 8 : extended ? 7 : s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -186,15 +201,22 @@ QByteArray serializeProject(const Project& p) {
             variables.append(QJsonObject{{"parameter", int(v.parameter)},
                                          {"surface", double(v.surface)}, {"lower", v.lower},
                                          {"upper", v.upper}, {"step", v.step}});
-        for (auto o : plan.operands)
-            operands.append(QJsonObject{{"kind", int(o.kind)}, {"field", o.field},
-                                        {"target", o.target}, {"scale", o.scale},
-                                        {"weight", o.weight}});
-        root["optimization"] = QJsonObject{{"variables", variables}, {"operands", operands},
+        for (auto o : plan.operands) {
+            QJsonObject row{{"kind",int(o.kind)},{"field",o.field},{"target",o.target},
+                            {"scale",o.scale},{"weight",o.weight}};
+            if(modernOptimization){row["frequency"]=o.frequency;row["surface"]=double(o.surface);row["height"]=o.height;}
+            operands.append(row);
+        }
+        QJsonObject settings = QJsonObject{{"variables", variables}, {"operands", operands},
                                            {"iterations", double(plan.iterations)},
                                            {"pupilGrid", plan.pupilGrid},
                                            {"minimumThroughput", plan.minimumThroughput},
                                            {"refocus", plan.refocus}};
+        if(modernOptimization) {
+            settings["algorithm"]=int(plan.algorithm); settings["starts"]=double(plan.starts);
+            settings["allFieldsFocus"]=plan.allFieldsFocus;
+        }
+        root["optimization"]=settings;
     }
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -204,7 +226,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6 && root["version"] != 7))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6 && root["version"] != 7 && root["version"] != 8))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -225,7 +247,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         m.maxWavelength = j["maxWavelength"].toDouble(5);
         if (j.contains("schott")) {
             const auto coefficients = j["schott"].toArray();
-            if (root["version"] != 7 || coefficients.size() != 6) throw std::invalid_argument("Schott dispersion requires format 7 and six coefficients");
+            if (root["version"].toInt() < 7 || coefficients.size() != 6) throw std::invalid_argument("Schott dispersion requires format 7 and six coefficients");
             m.schottFormula = true;
             for (int i=0;i<6;++i) {
                 if (!coefficients[i].isDouble()) throw std::invalid_argument("Invalid Schott coefficient");
@@ -239,7 +261,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     auto& s = p.system;
     if (seq.contains("fieldType")) {
         if (root["version"].toInt() < 6) throw std::invalid_argument("Field type metadata requires format 6 or newer");
-        s.fieldType = FieldType(integer(seq, "fieldType", root["version"] == 7 ? 3 : 2));
+        s.fieldType = FieldType(integer(seq, "fieldType", root["version"].toInt() >= 7 ? 3 : 2));
     } else if (root["version"] == 6) throw std::invalid_argument("Format 6 requires fieldType");
     s.name = string(seq, "name");
     s.surfaces.clear();
@@ -262,7 +284,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         surf.decenter = readVector(j["decenter"]);
         surf.tilt = readVector(j["tilt"]);
         auto a = j["asphere"].toArray();
-        if (a.size() != 4 && !(root["version"] == 7 && a.size() == 10))
+        if (a.size() != 4 && !(root["version"].toInt() >= 7 && a.size() == 10))
             throw std::invalid_argument("Invalid asphere array");
         for (int i = 0; i < a.size(); ++i) {
             if (!a[i].isDouble())
@@ -271,7 +293,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         }
         if (j.contains("oddAsphere")) {
             auto odd = j["oddAsphere"].toArray();
-            if (root["version"] != 7 || odd.size() != 10) throw std::invalid_argument("Odd asphere requires format 7 and ten coefficients");
+            if (root["version"].toInt() < 7 || odd.size() != 10) throw std::invalid_argument("Odd asphere requires format 7 and ten coefficients");
             for (int i = 0; i < 10; ++i) {
                 if (!odd[i].isDouble()) throw std::invalid_argument("Invalid odd asphere coefficient");
                 surf.oddAsphere[i] = odd[i].toDouble();
@@ -379,12 +401,22 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             throw std::invalid_argument("Invalid optimization settings");
         auto j = root["optimization"].toObject();
         OptimizationPlan plan;
+        const bool modern=root["version"].toInt()>=8;
+        if(modern) {
+            plan.algorithm=OptimizationAlgorithm(integer(j,"algorithm",1));
+            plan.starts=integer(j,"starts",8);
+            if(!j["allFieldsFocus"].isBool())throw std::invalid_argument("Missing allFieldsFocus");
+            plan.allFieldsFocus=j["allFieldsFocus"].toBool();
+        } else {
+            if(j.contains("algorithm") || j.contains("starts") || j.contains("allFieldsFocus"))
+                throw std::invalid_argument("New optimizer metadata requires format 8");
+        }
         if (!j["variables"].isArray() || !j["operands"].isArray() || !j["refocus"].isBool() ||
             j["variables"].toArray().size() > 64 || j["operands"].toArray().size() > 64)
             throw std::invalid_argument("Invalid optimization table");
         for (auto entry : j["variables"].toArray()) {
             auto v = entry.toObject();
-            plan.variables.push_back({VariableParameter(integer(v, "parameter", root["version"] == 7 ? int(VariableParameter::A21) : 7)),
+            plan.variables.push_back({VariableParameter(integer(v, "parameter", root["version"].toInt() >= 7 ? int(VariableParameter::A21) : 7)),
                                       integer(v, "surface", 499), number(v, "lower"),
                                       number(v, "upper"), number(v, "step")});
         }
@@ -393,8 +425,13 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             double field = number(o, "field");
             if (field < -1 || field > 49 || std::floor(field) != field)
                 throw std::invalid_argument("Invalid merit field");
-            plan.operands.push_back({MeritKind(integer(o, "kind", 6)), int(field),
+            plan.operands.push_back({MeritKind(integer(o, "kind", modern ? int(MeritKind::EdgeThickness) : 6)), int(field),
                                      number(o, "target"), number(o, "scale"), number(o, "weight")});
+            if(modern) {
+                auto& operand=plan.operands.back();operand.frequency=number(o,"frequency");
+                operand.surface=integer(o,"surface",499);operand.height=number(o,"height");
+            } else if(o.contains("frequency") || o.contains("surface") || o.contains("height"))
+                throw std::invalid_argument("New merit metadata requires format 8");
         }
         plan.iterations = integer(j, "iterations", 100);
         plan.pupilGrid = int(integer(j, "pupilGrid", 33));

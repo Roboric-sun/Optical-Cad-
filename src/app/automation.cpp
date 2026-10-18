@@ -25,12 +25,21 @@ QJsonObject executeRequest(const QJsonObject& request) {
     const auto options=request["options"].toObject();
     QJsonObject result;
     if(operation=="validate") result["valid"]=true;
-    else if(operation=="autofocus") result["image_z_mm"]=autofocus(s,c);
+    else if(operation=="autofocus") {
+        if(options.contains("all_fields") && !options["all_fields"].isBool())throw std::invalid_argument("all_fields must be boolean");
+        result["image_z_mm"]=options["all_fields"].toBool() ?
+            autofocusAllFields(s,c,option(options,"pupil_grid",s.pupilGrid,3,65)) : autofocus(s,c);
+    }
     else if(operation=="optimize") {
         auto plan=project.optimization.value_or(defaultOptimization(s,c));
         const auto optimized=optimize(s,c,plan);
         result={{"before",optimized.before},{"after",optimized.after},{"evaluations",double(optimized.evaluations)},
-                {"history",values(optimized.history)}};
+                {"history",values(optimized.history)},{"termination",QString::fromStdString(optimized.termination)},
+                {"algorithm",int(plan.algorithm)}};
+        QJsonArray starts;
+        for(const auto& run:optimized.starts)starts.append(QJsonObject{{"valid",run.valid},{"before",run.before},
+            {"after",run.after},{"evaluations",double(run.evaluations)}});
+        result["starts"]=starts;
     } else if(operation=="analyze") {
         const int grid=option(options,"pupil_grid",s.pupilGrid,3,65);
         const auto para=paraxial(s,c,s.wavelengths[s.primary].um);
