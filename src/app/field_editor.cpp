@@ -1,3 +1,4 @@
+#include "number_input.hpp"
 #include "field_editor.hpp"
 #include <QDialogButtonBox>
 #include <QComboBox>
@@ -16,7 +17,7 @@
 
 using namespace optics;
 namespace {
-class FieldDistanceBox : public QDoubleSpinBox {
+class FieldDistanceBox : public DecimalSpinBox {
     QString textFromValue(double value) const override { return locale().toString(value, 'g', 17); }
 };
 }
@@ -122,7 +123,7 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
                 for (int col = 0; col < 7; ++col) {
                     bool ok = false;
                     auto* item = table->item(row, col);
-                    values[col] = item ? item->text().trimmed().replace(',', '.').toDouble(&ok) : 0;
+                    values[col] = item ? uiNumber(item->text(), &ok) : 0;
                     if (!ok || !std::isfinite(values[col]))
                         throw std::invalid_argument("В каждой ячейке нужно конечное число");
                 }

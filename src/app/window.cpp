@@ -1,3 +1,4 @@
+#include "number_input.hpp"
 #include "window.hpp"
 #include "learning_help.hpp"
 #include "office.hpp"
@@ -45,6 +46,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidgetAction>
+#include <QListWidget>
 #include <QtConcurrent>
 #include <algorithm>
 #include <sstream>
@@ -63,7 +65,7 @@ static const QStringList interactions = {"Преломление", "Поглощ
 static const QStringList shapes = {"Точечный", "Прямоугольный", "Эллиптический"};
 static const QStringList distributions = {"Конусное", "Косинусное", "Изотропное"};
 static QDoubleSpinBox* spin(double v, double low, double high, int digits = 4) {
-    auto* s = new QDoubleSpinBox;
+    auto* s = new DecimalSpinBox;
     s->setDecimals(digits);
     s->setRange(low, high);
     s->setValue(v);
@@ -97,6 +99,9 @@ Window::Window(QWidget* parent)
     setDockNestingEnabled(true);
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     auto* file = new QMenu("Файл", this);
+    auto* examples = new QAction("Открыть пример…", this); examples->setObjectName("examplesAction");
+    connect(examples,&QAction::triggered,this,[this]{openExamples();});
+    file->addAction(examples);
     auto* edit = new QMenu("Правка", this);
     auto* viewMenu = new QMenu("Рабочая область", this);
     auto* help = new QMenu("Справка", this);
@@ -251,7 +256,7 @@ Window::Window(QWidget* parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setFixedHeight(94);
+    scroll->setFixedHeight(120);
     ribbon_ = new QWidget;
     ribbon_->setObjectName("ribbonContents");
     scroll->setWidget(ribbon_);
@@ -288,13 +293,13 @@ Window::Window(QWidget* parent)
     tool("redo", "Повторить", [this] { undo(true); });
     tool("zoomIn", "Увеличить", [this] {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = std::min(8., p->zoom * 1.25);
+            p->setZoom(p->zoom * 1.25);
             p->update();
         }
     });
     tool("zoomOut", "Уменьшить", [this] {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = std::max(.2, p->zoom / 1.25);
+            p->setZoom(p->zoom / 1.25);
             p->update();
         }
     });
@@ -339,19 +344,28 @@ Window::Window(QWidget* parent)
     plotBar_->addSeparator();
     scaleLabel_ = new QLabel("Масштаб:");
     plotBar_->addWidget(scaleLabel_);
-    scaleBox_ = new QDoubleSpinBox;
+    scaleBox_ = new DecimalSpinBox;
     scaleBox_->setObjectName("viewScale");
     scaleBox_->setRange(.2, 8);
     scaleBox_->setValue(1);
     scaleBox_->setSingleStep(.1);
-    scaleBox_->setDecimals(1);
+    scaleBox_->setDecimals(2);
     scaleBox_->setFixedWidth(64);
     plotBar_->addWidget(scaleBox_);
     connect(scaleBox_, &QDoubleSpinBox::valueChanged, this, [this](double scale) {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = scale;
+            p->setZoom(scale);
             p->update();
         }
+    });
+    layoutRaysLabel_ = new QLabel("Лучей на поле:"); plotBar_->addWidget(layoutRaysLabel_);
+    layoutRays_ = integerSpin(13,3,101); layoutRays_->setObjectName("layoutRayCount");
+    layoutRays_->setSingleStep(2); layoutRays_->setFixedWidth(64);
+    layoutRays_->setToolTip("Число лучей на схеме. Сетка расчётных лучей задаётся в параметрах системы.");
+    plotBar_->addWidget(layoutRays_);
+    connect(layoutRays_,&QSpinBox::valueChanged,this,[this](int count){
+        project_.workspace["layoutRays"]=count;
+        if(results_) {results_->layoutRays=count; updatePlots(); rebuildTree();}
     });
     displayLabel_ = new QLabel("Лучей отображается:");
     plotBar_->addWidget(displayLabel_);
@@ -826,12 +840,14 @@ void Window::changeMode(int mode) {
     for (auto* action : plotBar_->actions())
         if (auto* wa = qobject_cast<QWidgetAction*>(action)) {
             QWidget* w = wa->defaultWidget();
-            if (w == fieldBox_ || w == scaleBox_ || w == scaleLabel_)
+            if (w == fieldBox_ || w == scaleBox_ || w == scaleLabel_ || w == layoutRays_ || w == layoutRaysLabel_)
                 action->setVisible(mode == 0);
             if (w == detectorBox_ || w == displayRays_ || w == displayLabel_)
                 action->setVisible(mode == 1);
         }
     {
+        QSignalBlocker raysBlock(layoutRays_);
+        layoutRays_->setValue(std::clamp(project_.workspace["layoutRays"].toInt(13),3,101));
         QSignalBlocker block(displayRays_);
         displayRays_->setValue(project_.scene.displayRays);
     }
@@ -869,6 +885,11 @@ void Window::buildRibbon() {
         b->setEnabled(false);
         b->setToolTip("Ещё не реализовано: " + reason);
     };
+    auto* files = group("Файлы");
+    auto* fileColumn = files->column();
+    files->small(fileColumn,"folder","Открыть…",[this]{open();},"openProjectButton");
+    files->small(fileColumn,"catalog","Примеры…",[this]{openExamples();},"examplesButton");
+    files->small(fileColumn,"save","Сохранить",[this]{save();},"saveProjectButton");
     auto validate = [this] {
         auto errors = project_.mode ? project_.scene.validate(project_.catalog)
                                     : project_.system.validate(project_.catalog);
@@ -1160,43 +1181,18 @@ void Window::fitRibbon() {
     auto* scroll = findChild<QScrollArea*>("ribbonScroll");
     if (!scroll || !ribbon_->layout())
         return;
-    int natural = ribbon_->property("naturalWidth").toInt();
-    if (natural <= 0)
-        natural = ribbon_->layout()->sizeHint().width();
-    natural = std::max(natural, ribbon_->layout()->minimumSize().width());
-    ribbon_->setProperty("naturalWidth", natural);
-    const int available = scroll->viewport()->width() - 8;
-    if (ribbon_->property("availableWidth").toInt() != available) {
-        ribbon_->setProperty("compressionSteps", 0);
-        ribbon_->setProperty("availableWidth", available);
+    // Keep commands readable. The ribbon already lives in a horizontal scroll area.
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    for (auto* button : ribbon_->findChildren<QToolButton*>()) {
+        if (!button->property("ribbonCommand").toBool()) continue;
+        button->setStyleSheet("font-size:13px;font-weight:600");
+        const int size = button->property("largeCommand").toBool() ? 32 : 18;
+        button->setIconSize({size,size}); button->updateGeometry();
     }
-    const int steps = ribbon_->property("compressionSteps").toInt();
-    double scale = std::min(1., double(available) / std::max(1, natural));
-    for (auto* b : ribbon_->findChildren<QToolButton*>()) {
-        if (!b->property("ribbonCommand").toBool())
-            continue;
-        b->setStyleSheet(
-            QString("font-size:%1px").arg(std::max(7, int(std::floor(12 * scale)) - steps)));
-        bool large = b->property("largeCommand").toBool();
-        int size = large ? std::max(18, qRound(32 * scale) - 2 * steps)
-                         : std::max(10, qRound(16 * scale) - steps);
-        b->setIconSize({size, size});
-        b->updateGeometry();
-    }
-    // Each group and command column caches its minimum size. Refresh nested
-    // layouts too, so the scroll area can shrink after changing font metrics.
-    for (auto* layout : ribbon_->findChildren<QLayout*>())
-        layout->invalidate();
+    for (auto* layout : ribbon_->findChildren<QLayout*>()) layout->invalidate();
     ribbon_->layout()->activate();
+    ribbon_->setMinimumWidth(ribbon_->layout()->minimumSize().width());
     ribbon_->updateGeometry();
-    QTimer::singleShot(0, this, [this] {
-        auto* scroll = findChild<QScrollArea*>("ribbonScroll");
-        const int steps = ribbon_->property("compressionSteps").toInt();
-        if (scroll && scroll->horizontalScrollBar()->maximum() > 0 && steps < 6) {
-            ribbon_->setProperty("compressionSteps", steps + 1);
-            fitRibbon();
-        }
-    });
 }
 
 void Window::parkWorkspace() {
@@ -1324,7 +1320,7 @@ void Window::properties(int column) {
         auto* form = new QFormLayout(&dialog);
         QList<QDoubleSpinBox*> values;
         for (int i = 0; i < count; ++i) {
-            auto* value = spin(table->item(row, column + i)->text().toDouble(),
+            auto* value = spin(uiNumber(table->item(row, column + i)->text()),
                                column == 16 ? 0 : -1e6, column == 16 ? 1 : 1e6, 6);
             form->addRow(table->horizontalHeaderItem(column + i)->text(), value);
             values << value;
@@ -1616,7 +1612,7 @@ void Window::rebuildTree() {
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
         for (size_t i = 0; i < s.fields.size(); ++i) {
             auto* field =
-                node(rays, QString("Пучок поля %1 %2").arg(s.fields[i].y).arg(QString::fromUtf8(fieldUnit(s.fieldType))), "13 лучей", "fan");
+                node(rays, QString("Пучок поля %1 %2").arg(s.fields[i].y).arg(QString::fromUtf8(fieldUnit(s.fieldType))), QString::number(std::clamp(project_.workspace["layoutRays"].toInt(13),3,101))+" лучей", "fan");
             node(field, "Тип сетки", "меридиональный срез", "grid");
             node(field, "Число лучей", "13", "rays");
             node(field, "Цвет отображения",
@@ -1753,6 +1749,10 @@ void Window::addView(View v) {
         if (id >= 0)
             emit views_->tabCloseRequested(id);
     });
+    connect(plot,&PlotWidget::viewChanged,this,[this,plot](double value){
+        if(views_->currentWidget()==plot) {QSignalBlocker block(scaleBox_);scaleBox_->setValue(value);}
+    });
+    plot->setToolTip("Колесо над графиком — обе оси; над горизонтальной/вертикальной осью — только эта ось. Сброс — стандартный масштаб.");
     plot->officePresentation = true;
     views_->setCurrentIndex(i);
     if (uiReady_) rebuildTree();
@@ -1777,6 +1777,7 @@ void Window::recalculate() {
     results_->project = project_;
     results_->field = field_;
     results_->selected = selected_;
+    results_->layoutRays = std::clamp(project_.workspace["layoutRays"].toInt(13),3,101);
     results_->detector = std::max(0, detectorBox_->currentIndex());
     if (previous && previous->scene) {
         results_->scene = previous->scene;
@@ -1806,8 +1807,8 @@ void Window::recalculate() {
                 } catch (const std::exception& e) {
                     results_->diffractionError = str(e.what());
                 }
-                results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);
-                results_->curves[1] = fieldCurvature(project_.system, project_.catalog);
+                try {results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);} catch (...) {}
+                try { results_->curves[1] = fieldCurvature(project_.system, project_.catalog); } catch (...) {}
                 try {
                     results_->curves[2] = chromaticFocus(project_.system, project_.catalog);
                 } catch (...) {
@@ -1824,6 +1825,14 @@ void Window::recalculate() {
                 }
                 if (results_->spots[field_].samples.empty())
                     focus += " · Все лучи отсечены";
+                const auto clear = clearSemiDiameters(resolvedSystem(project_.system,project_.catalog));
+                int trimmed = 0;
+                for(size_t i=0;i<clear.size();++i)
+                    if(clear[i] < project_.system.surfaces[i].semiDiameter-1e-8) ++trimmed;
+                if(trimmed) {
+                    results_->geometryWarning=QString("Края поверхностей обрезаны: %1. Расчёт продолжается; внешние лучи отсекаются.").arg(trimmed);
+                    focus += " · Обрезка краёв: " + QString::number(trimmed);
+                }
                 status_->setText(QString("Режим: последовательный    %1    Полей: %2    Волн: %3   "
                                          " RMS: %4 мкм    Готово")
                                      .arg(focus)
@@ -1872,7 +1881,7 @@ void Window::editSurface(int r, int c) {
         candidate.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -1959,7 +1968,7 @@ void Window::editObject(int r, int c) {
         o.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -2033,7 +2042,7 @@ void Window::editSource(int r, int c) {
         src.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -2269,7 +2278,7 @@ void Window::parameters() {
     form->addRow("Дефокус, мм", defocus);
     auto* grid = integerSpin(s.pupilGrid, 3, 65);
     form->addRow("Сетка зрачка (нечётное число)", grid);
-    auto* fields = new QTextEdit;
+    auto* fields = new QTextEdit; fields->setObjectName("parameterFields");
     fields->setFixedHeight(95);
     QString fs;
     for (auto f : s.fields) {
@@ -2282,7 +2291,7 @@ void Window::parameters() {
     fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм", "Реальная высота изображения, мм"});
     fieldType->setCurrentIndex(int(s.fieldType)); form->addRow("Определение поля", fieldType);
     form->addRow("Поля: X Y вес (единицы выбранного типа)\n[ VUX VLX VUY VLY ]", fields);
-    auto* waves = new QTextEdit;
+    auto* waves = new QTextEdit; waves->setObjectName("parameterWavelengths");
     waves->setFixedHeight(95);
     QString ws;
     for (auto w : s.wavelengths)
@@ -2305,7 +2314,7 @@ void Window::parameters() {
             candidate.pupilGrid = grid->value() | 1;
             candidate.fields.clear();
             candidate.wavelengths.clear();
-            std::istringstream fin(fields->toPlainText().toStdString());
+            std::istringstream fin(fields->toPlainText().replace(',', '.').toStdString());
             double x, y, weight;
             std::string line;
             while (std::getline(fin, line)) {
@@ -2324,7 +2333,7 @@ void Window::parameters() {
                 }
                 candidate.fields.push_back(f);
             }
-            std::istringstream win(waves->toPlainText().toStdString());
+            std::istringstream win(waves->toPlainText().replace(',', '.').toStdString());
             double w;
             while (std::getline(win, line)) {
                 if (line.find_first_not_of(" \t\r") == std::string::npos)
@@ -2824,18 +2833,52 @@ void Window::save(bool as) {
 void Window::open() {
     if (!mayDiscard())
         return;
-    auto path = QFileDialog::getOpenFileName(this, "Открыть проект", {}, "Optical CAD (*.optcad)");
+    auto path = QFileDialog::getOpenFileName(this, "Открыть проект или Geopter JSON", QFileInfo(path_).absolutePath(), "Оптические проекты (*.optcad *.json);;Optical CAD (*.optcad);;Geopter (*.json)");
     if (path.isEmpty())
         return;
     try {
-        auto p = loadProject(path);
+        Project p;
+        if (path.endsWith(".json",Qt::CaseInsensitive)) {
+            QFile input(path); if(!input.open(QIODevice::ReadOnly)) throw std::runtime_error("Не удалось открыть файл");
+            p=importGeopter(input.readAll());
+        } else p=loadProject(path);
         setProject(std::move(p));
-        path_ = path;
-        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path_).fileName());
+        path_ = path.endsWith(".json",Qt::CaseInsensitive) ? QString() : path;
+        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path).fileName());
     } catch (const std::exception& e) {
         error(e);
     }
 }
+void Window::openExamples() {
+    QDialog dialog(this); dialog.setObjectName("examplesDialog"); dialog.setWindowTitle("Примеры оптических систем");
+    auto* form = new QVBoxLayout(&dialog);
+    auto* info = new QLabel("Выберите готовую систему. Изменения сохраняйте отдельным проектом через «Сохранить как».");
+    info->setWordWrap(true); form->addWidget(info);
+    auto* eye = new QPushButton("Глаз Гульстранда № 1 (6 преломляющих поверхностей)");
+    eye->setObjectName("gullstrandExampleButton"); form->addWidget(eye);
+    connect(eye,&QPushButton::clicked,&dialog,[&]{
+        if(!mayDiscard())return;setProject(gullstrandEyeProject());path_.clear();dialog.accept();
+    });
+    auto* list = new QListWidget; list->setObjectName("exampleList"); form->addWidget(list);
+    const QDir app(QCoreApplication::applicationDirPath());
+    for(const auto& candidate : {app.filePath("../examples"),app.filePath("../../../examples"),QString(OPTICS_EXAMPLES_DIR)}) {
+        const QDir directory(candidate); if(!directory.exists())continue;
+        for(const auto& name : directory.entryList({"*.optcad"},QDir::Files)) {
+            auto* item=new QListWidgetItem(name,list); item->setData(Qt::UserRole,directory.absoluteFilePath(name));
+        }
+        if(list->count())break;
+    }
+    auto* load = new QPushButton("Открыть выбранный пример"); load->setObjectName("openSelectedExample"); form->addWidget(load);
+    auto openSelected=[&]{
+        if(!list->currentItem() || !mayDiscard())return;
+        try {setProject(loadProject(list->currentItem()->data(Qt::UserRole).toString()));path_.clear();dialog.accept();}
+        catch(const std::exception& e){error(e);}
+    };
+    connect(load,&QPushButton::clicked,&dialog,openSelected);
+    connect(list,&QListWidget::itemDoubleClicked,&dialog,openSelected);
+    if(list->count())list->setCurrentRow(0); dialog.resize(660,430); dialog.exec();
+}
+
 void Window::closeEvent(QCloseEvent* e) {
     if (mayDiscard()) {
         cancel_->store(true);
@@ -2921,6 +2964,7 @@ void Window::writeExamples(const QString& directory) {
     aspheric.workspace["polychromaticDiffraction"] = true;
     optics::autofocus(aspheric.system, aspheric.catalog);
     saveProject(directory + "/aspheric_singlet.optcad", aspheric);
+    saveProject(directory + "/gullstrand_eye.optcad", gullstrandEyeProject());
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

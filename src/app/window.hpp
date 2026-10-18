@@ -56,7 +56,8 @@ class Window : public QMainWindow {
     QLineEdit* treeSearch_;
     QDoubleSpinBox* scaleBox_;
     QSpinBox* displayRays_;
-    QLabel *scaleLabel_, *displayLabel_;
+    QLabel *scaleLabel_, *displayLabel_, *layoutRaysLabel_;
+    QSpinBox* layoutRays_;
     QSet<int> hidden_;
     bool uiReady_ = false;
     bool sceneBusy_ = false;
@@ -77,6 +78,7 @@ class Window : public QMainWindow {
     QList<QByteArray> undo_, redo_;
     void buildRibbon();
     void fitRibbon();
+    void openExamples();
     void parkWorkspace();
     void activateWorkspace();
     void showEditor();

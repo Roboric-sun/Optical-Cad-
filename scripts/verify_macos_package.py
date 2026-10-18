@@ -63,7 +63,7 @@ def verify(bundle: Path) -> None:
         sdk = bundle / "Contents/Resources/python/opticalcad.py"
         if not sdk.is_file():
             raise RuntimeError("Python SDK is missing from the application bundle")
-        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height", "real_image_height", "aspheric_singlet"):
+        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height", "real_image_height", "aspheric_singlet", "gullstrand_eye"):
             project = json.loads((Path(output) / f"{name}.optcad").read_text())
             if project["format"] != "optical-cad" or not project["sequential"]["surfaces"]:
                 raise RuntimeError(f"Invalid generated example: {name}")
@@ -102,6 +102,12 @@ def verify(bundle: Path) -> None:
                 or not project["workspace"].get("polychromaticDiffraction")
             ):
                 raise RuntimeError("Extended aspheric example is incomplete")
+            if name == "gullstrand_eye" and (
+                len(project["sequential"]["surfaces"]) != 7
+                or project["sequential"]["stop"] != 2
+                or project["sequential"]["surfaces"][4]["radius"] != 7.911
+            ):
+                raise RuntimeError("Gullstrand eye example is incomplete")
     # Validate companion files in the full ZIP too, not just the executable bundle.
     with (bundle / "Contents/Info.plist").open("rb") as plist:
         metadata = plistlib.load(plist)
@@ -117,6 +123,8 @@ def verify(bundle: Path) -> None:
                         "examples/vignetted_singlet.optcad", "examples/object_height.optcad",
                         "examples/image_height.optcad", "docs/FIELDS_RU.md", "scripts/opticalcad.py",
                         "docs/RELEASE_1_0_RU.md", "docs/PYTHON_API_RU.md",
+                        "docs/GULLSTRAND_EYE_RU.md", "docs/TESTER_FEEDBACK_1_1_RU.md",
+                        "examples/gullstrand_eye.optcad",
                         "docs/benchmarks/geopter-1.0-matched.json",
                         "examples/real_image_height.optcad", "examples/aspheric_singlet.optcad",
                         "optical_cad.app/Contents/Resources/python/opticalcad.py",
@@ -124,7 +132,7 @@ def verify(bundle: Path) -> None:
             for relative in required:
                 if prefix + relative not in names:
                     raise RuntimeError(f"Missing companion file in {archive}: {relative}")
-    print(f"Package OK: {objects} Mach-O objects, local dependencies, eleven generated examples, batch API and Python SDK.")
+    print(f"Package OK: {objects} Mach-O objects, local dependencies, twelve generated examples, batch API and Python SDK.")
 
 
 if __name__ == "__main__":

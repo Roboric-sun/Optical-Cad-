@@ -1,3 +1,4 @@
+#include "number_input.hpp"
 #include "optimization_editor.hpp"
 #include <QCheckBox>
 #include <QComboBox>
@@ -33,7 +34,7 @@ static void cell(QTableWidget* table, int row, int col, double value, bool edita
 static double readCell(const QTableWidget* table, int row, int col) {
     bool valid = false;
     const auto* item = table->item(row, col);
-    double v = item ? item->text().toDouble(&valid) : 0;
+    double v = item ? uiNumber(item->text(), &valid) : 0;
     if (!valid || !std::isfinite(v))
         throw std::invalid_argument("В таблице нужно конечное число (десятичный разделитель — точка)");
     return v;
@@ -107,7 +108,7 @@ OptimizationEditor::OptimizationEditor(const Project& project, QWidget* parent)
     grid_->setObjectName("optimizationGrid");
     grid_->setRange(3, 33);
     grid_->setValue(p.pupilGrid);
-    survival_ = new QDoubleSpinBox;
+    survival_ = new DecimalSpinBox;
     survival_->setObjectName("optimizationSurvival");
     survival_->setRange(0, 1);
     survival_->setDecimals(3);

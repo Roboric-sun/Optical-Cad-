@@ -10,6 +10,7 @@ size_t marginalChecks();
 size_t fieldChecks();
 size_t fieldTypeChecks();
 size_t releaseChecks();
+size_t apertureEdgeChecks();
 static size_t count = 0;
 static void check(bool condition, const char* name) {
     ++count;
@@ -367,6 +368,7 @@ int main() {
         count += fieldChecks();
         count += fieldTypeChecks();
         count += releaseChecks();
+        count += apertureEdgeChecks();
         std::cout << count << " physical checks passed\n";
         return 0;
     } catch (const std::exception& e) {

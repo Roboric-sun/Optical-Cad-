@@ -58,6 +58,7 @@ static bool paintedData(const QPixmap& pixmap) {
     return false;
 }
 size_t releaseGUIChecks(Window&, const QString&);
+size_t testerFeedbackGUIChecks(Window&, const QString&);
 int main(int argc, char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
@@ -122,22 +123,8 @@ int main(int argc, char** argv) {
         check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty(),
               "Demo analyses succeed");
         auto* rs = w.findChild<QScrollArea*>("ribbonScroll");
-        const bool sequentialFits = QTest::qWaitFor(
-            [&] { return rs->horizontalScrollBar()->maximum() == 0; }, 1500);
-        if (!sequentialFits) {
-            auto* ribbon = rs->widget();
-            std::cerr << "Ribbon: window=" << w.width() << " viewport="
-                      << rs->viewport()->width() << " contents=" << ribbon->width()
-                      << " minimum=" << ribbon->minimumSizeHint().width() << " natural="
-                      << ribbon->property("naturalWidth").toInt() << " steps="
-                      << ribbon->property("compressionSteps").toInt() << " overflow="
-                      << rs->horizontalScrollBar()->maximum() << '\n';
-            for (auto* button : ribbon->findChildren<QToolButton*>())
-                std::cerr << button->objectName().toStdString() << " font="
-                          << button->font().pixelSize() << " hint=" << button->sizeHint().width()
-                          << " width=" << button->width() << '\n';
-        }
-        check(sequentialFits, "Sequential ribbon fits default window");
+        check(rs && rs->horizontalScrollBarPolicy()==Qt::ScrollBarAsNeeded,
+              "Sequential ribbon scrolls while keeping command text readable");
         auto* modes = w.findChild<QTabBar*>("modeTabs");
         check(modes->count() == 9 && modes->tabText(5) == "Библиотеки",
               "Reference ribbon context tabs");
@@ -273,8 +260,8 @@ int main(int argc, char** argv) {
         w.findChild<QTabBar*>("modeTabs")->setCurrentIndex(1);
         QTest::qWait(100);
         check(w.project().mode == 1, "Nonsequential mode switches");
-        check(QTest::qWaitFor([&] { return rs->horizontalScrollBar()->maximum() == 0; }, 1500),
-              "Nonsequential ribbon fits default window");
+        check(rs->horizontalScrollBarPolicy()==Qt::ScrollBarAsNeeded,
+              "Nonsequential ribbon remains accessible without shrinking its text");
         check(w.findChild<QTableWidget*>("objectTable")->rowCount() == 2,
               "Object editor populated");
         click(w, "traceSceneButton");
@@ -385,6 +372,7 @@ int main(int argc, char** argv) {
         checks += int(fieldGUIChecks(w, dir));
         checks += int(fieldTypeGUIChecks(w, dir));
         checks += int(releaseGUIChecks(w, dir));
+        checks += int(testerFeedbackGUIChecks(w, dir));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

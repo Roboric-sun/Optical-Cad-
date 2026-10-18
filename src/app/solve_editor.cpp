@@ -1,3 +1,4 @@
+#include "number_input.hpp"
 #include "solve_editor.hpp"
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -49,7 +50,7 @@ SolveEditor::SolveEditor(const Project& project, size_t surface, SolveParameter 
     }
     form->addRow("Способ задания", type);
     auto spin = [&](QString id, double initial, double low, double high) {
-        auto* box = new QDoubleSpinBox;
+        auto* box = new DecimalSpinBox;
         box->setObjectName(id);
         box->setDecimals(8);
         box->setRange(low, high);

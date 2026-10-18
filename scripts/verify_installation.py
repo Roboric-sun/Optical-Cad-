@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             sys.path.insert(0, str(package / "scripts"))
             from opticalcad import Project
             examples = sorted((package / "examples").glob("*.optcad"))
-            if len(examples) != 11:
-                raise RuntimeError(f"Expected 11 examples, found {len(examples)}")
+            if len(examples) != 12:
+                raise RuntimeError(f"Expected 12 examples, found {len(examples)}")
             for path in examples:
                 project = Project.load(path, executable=batch)
                 if not project.validate():
@@ -105,4 +105,4 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not result.get("ok"):
         raise RuntimeError(result)
-    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 11 examples and spectral diffraction")
+    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 12 examples and spectral diffraction")

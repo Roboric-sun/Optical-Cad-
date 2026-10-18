@@ -38,6 +38,7 @@ QJsonObject executeRequest(const QJsonObject& request) {
         QJsonObject indices;
         for(const auto& surface:s.surfaces) indices[QString::fromStdString(surface.material)]=c.get(surface.material).index(s.wavelengths[s.primary].um);
         result["refractive_indices"]=indices;
+        result["effective_semidiameters_mm"]=values(clearSemiDiameters(resolvedSystem(s,c)));
         QJsonArray fields;
         for(auto field:s.fields) {
             const auto sp=spot(s,c,field,grid);

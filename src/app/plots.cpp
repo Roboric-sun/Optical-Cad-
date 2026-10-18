@@ -124,8 +124,32 @@ void PlotWidget::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
 }
 void PlotWidget::wheelEvent(QWheelEvent* e) {
-    zoom = std::clamp(zoom * std::exp(e->angleDelta().y() / 900.0), .2, 8.);
-    update();
+    const double requested = std::exp(e->angleDelta().y() / 900.0);
+    const QPointF cursor = e->position();
+    const AxisView* selected = nullptr;
+    bool xOnly = false, yOnly = false;
+    for (const auto& axis : axes_) {
+        if (QRectF(axis.rect.left(), axis.rect.bottom(), axis.rect.width(), 45).contains(cursor)) {
+            selected = &axis; xOnly = true; break;
+        }
+        if (QRectF(axis.rect.left()-58, axis.rect.top(), 58, axis.rect.height()).contains(cursor)) {
+            selected = &axis; yOnly = true; break;
+        }
+        if (axis.rect.contains(cursor)) selected = &axis;
+    }
+    const double oldZoom = zoom, oldX = zoomX, oldY = zoomY;
+    if (xOnly) zoomX = std::clamp(zoomX * requested, .05, 100.);
+    else if (yOnly) zoomY = std::clamp(zoomY * requested, .05, 100.);
+    else zoom = std::clamp(zoom * requested, .2, 8.);
+    if (selected) {
+        const double u = std::clamp((cursor.x()-selected->rect.left())/selected->rect.width(),0.,1.);
+        const double v = std::clamp((selected->rect.bottom()-cursor.y())/selected->rect.height(),0.,1.);
+        if (!yOnly) panX += (u-.5)*(selected->xmax-selected->xmin)*
+            (1-oldZoom*oldX/(zoom*zoomX))/selected->baseXSpan;
+        if (!xOnly) panY += (v-.5)*(selected->ymax-selected->ymin)*
+            (1-oldZoom*oldY/(zoom*zoomY))/selected->baseYSpan;
+    }
+    emit viewChanged(zoom); e->accept(); update();
 }
 void PlotWidget::mousePressEvent(QMouseEvent* e) {
     if (view == View::Scene && officePresentation) {
@@ -174,10 +198,11 @@ void PlotWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(rect(), Qt::white);
     const bool toolbar = findChild<QToolBar*>("plotToolbar", Qt::FindDirectChildrenOnly) != nullptr;
-    QRectF area(58, 52, width() - 90, height() - 95);
+    axes_.clear();
+    QRectF area(58, 52, width() - 90, height() - 105);
     if (view == View::DetectorProfile)
         area = QRectF(58, 80, width() - 375, height() - 175);
-    if (officePresentation && (view == View::Layout || view == View::Scene))
+    if (officePresentation && view == View::Scene)
         area = QRectF(14, toolbar ? 42 : 14, width() - 28, height() - (toolbar ? 56 : 28));
     p.setPen(QColor("#244565"));
     QFont title = font();
@@ -200,7 +225,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         return;
     }
     const auto& sys = physical;
-    if (!d.error.isEmpty()) {
+    if (!d.error.isEmpty() && view != View::Layout) {
         p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.error);
         return;
     }
@@ -226,7 +251,13 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                         t = std::log10(1 + 999 * t) / 3;
                     image.setPixelColor(x, dt.ny - 1 - y, heat(t));
                 }
-            p.drawImage(mapRect, image);
+            const auto& object = d.project.scene.objects.at(dt.objectIndex);
+            const double spanX=object.size.x,spanY=object.size.y;
+            const double xmin=panX*spanX-spanX/(2*zoom*zoomX),xmax=panX*spanX+spanX/(2*zoom*zoomX);
+            const double ymin=panY*spanY-spanY/(2*zoom*zoomY),ymax=panY*spanY+spanY/(2*zoom*zoomY);
+            axes_.push_back({mapRect,xmin,xmax,ymin,ymax,spanX,spanY});
+            p.drawImage(mapRect,image,QRectF((xmin/spanX+.5)*dt.nx,(.5-ymax/spanY)*dt.ny,
+                                           (xmax-xmin)/spanX*dt.nx,(ymax-ymin)/spanY*dt.ny));
         } else {
             p.setPen(QColor("#ddd9ea"));
             p.drawText(mapRect.adjusted(8, 8, -8, -8), Qt::AlignCenter | Qt::TextWordWrap,
@@ -293,6 +324,11 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             xmax = xmin + 1;
         if (ymax <= ymin)
             ymax = ymin + 1;
+        const double baseX = xmax-xmin, baseY = ymax-ymin;
+        const double cx = (xmin+xmax)/2 + panX*baseX, cy = (ymin+ymax)/2 + panY*baseY;
+        const double dx = baseX/(2*zoom*zoomX), dy = baseY/(2*zoom*zoomY);
+        xmin = cx-dx; xmax = cx+dx; ymin = cy-dy; ymax = cy+dy;
+        axes_.push_back({area,xmin,xmax,ymin,ymax,baseX,baseY});
         p.setPen(QPen(QColor("#e5edf4"), 1));
         for (int i = 0; i <= 4; ++i) {
             double f = i / 4.;
@@ -303,7 +339,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                            QPointF(area.right(), area.top() + area.height() * f));
             }
             p.setPen(QColor("#637b8e"));
-            if (!(officePresentation && view == View::Layout)) {
+            {
                 p.drawText(QRectF(area.left() + area.width() * f - 40, area.bottom() + 6, 80, 18),
                            Qt::AlignCenter, QString::number(xmin + (xmax - xmin) * f, 'g', 4));
                 p.drawText(QRectF(0, area.bottom() - area.height() * f - 9, 50, 18), Qt::AlignRight,
@@ -314,7 +350,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         p.setPen(QColor("#d0deec"));
         p.drawRect(area);
         p.setPen(QColor("#637b8e"));
-        if (!(officePresentation && view == View::Layout)) {
+        {
             p.drawText(QRectF(area.left(), height() - 24, area.width(), 18), Qt::AlignCenter, xl);
             p.drawText(QRectF(20, 35, width() - 40, 18), Qt::AlignLeft, yl);
         }
@@ -326,23 +362,58 @@ void PlotWidget::paintEvent(QPaintEvent*) {
     targets.clear();
     if (view == View::Layout) {
         auto verts = sys.vertices();
+        if (verts.empty()) {p.drawText(area,Qt::AlignCenter,"Добавьте поверхность");return;}
         double length = std::max(sys.imageZ(), verts.back() + 5),
                height = std::max(15., sys.pupilDiameter * 1.2);
         for (auto& s : sys.surfaces)
             height = std::max(height, s.semiDiameter * 1.3);
-        for (auto field : sys.fields)
-            height = std::max(height, std::abs(tan(field.y * deg) * length) * 1.15 + 10);
-        auto map = axes(-25, length + 5, -height / zoom, height / zoom, "Z, мм", "Y, мм");
+        for (auto field : sys.fields) {
+            try {height = std::max(height,std::abs(tan(angularField(sys,cat,field).y*deg)*length)*1.15+10);}
+            catch(const std::exception&) {}
+        }
+        auto map = axes(-25, length + 5, -height, height, "Z, мм", "Y, мм");
         p.save();
         p.setClipRect(area);
         p.setPen(QPen(QColor("#bdcbd6"), 1, Qt::DashLine));
         p.drawLine(map(-25, 0), map(length + 5, 0));
+        const auto clear = clearSemiDiameters(sys);
+        const bool centered = std::all_of(sys.surfaces.begin(),sys.surfaces.end(),[](const Surface& face){
+            return face.decenter.norm2()==0 && face.tilt.norm2()==0 && face.kind!=SurfaceKind::Mirror;
+        });
+        if(centered) {
+            // Fill material between currently existing interfaces. Smaller inner
+            // surfaces can end inside an enclosing shell (the crystalline lens).
+            std::vector<double> levels{0};
+            const double extent=*std::max_element(clear.begin(),clear.end());
+            for(int j=0;j<=160;++j)levels.push_back(-extent+2*extent*j/160);
+            for(double r:clear){levels.push_back(-r);levels.push_back(r);}
+            std::sort(levels.begin(),levels.end());
+            levels.erase(std::unique(levels.begin(),levels.end()),levels.end());
+            QPainterPath volumes;volumes.setFillRule(Qt::WindingFill);
+            for(size_t band=0;band+1<levels.size();++band) {
+                const double y0=levels[band],y1=levels[band+1],mid=(y0+y1)/2;
+                size_t previous=SIZE_MAX;
+                for(size_t i=0;i<sys.surfaces.size();++i) {
+                    if(sys.surfaces[i].kind!=SurfaceKind::Refract || std::abs(mid)>clear[i])continue;
+                    if(previous!=SIZE_MAX && sys.surfaces[previous].material!="AIR" &&
+                       !d.hidden.contains(int(previous)) && !d.hidden.contains(int(i))) {
+                        QPolygonF region;
+                        for(auto [face,y] : {std::pair{previous,y0},std::pair{previous,y1},std::pair{i,y1},std::pair{i,y0}})
+                            region << map(verts[face]+sag(sys.surfaces[face],0,y),y);
+                        volumes.addPolygon(region);volumes.closeSubpath();
+                    }
+                    previous=i;
+                }
+            }
+            p.fillPath(volumes,QColor(100,163,212,55));
+        }
+        p.setBrush(Qt::NoBrush);
         for (size_t i = 0; i < sys.surfaces.size(); ++i) {
             auto& s = sys.surfaces[i];
             Pose pose{{s.decenter.x, s.decenter.y, verts[i] + s.decenter.z}, s.tilt};
             QPainterPath path;
             for (int k = 0; k <= 100; ++k) {
-                double y = (2. * k / 100 - 1) * s.semiDiameter;
+                double y = (2. * k / 100 - 1) * clear[i];
                 Vec3 pos = pose.world({0, y, sag(s, 0, y)});
                 QPointF point = map(pos.z, pos.y);
                 if (k == 0)
@@ -355,28 +426,30 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                 continue;
             p.setPen(QPen(int(i) == d.selected ? QColor("#ea9c36") : QColor("#3c7aaa"),
                           int(i) == d.selected ? 3 : 2));
-            p.drawPath(path);
-            if (s.material != "AIR" && i + 1 < sys.surfaces.size()) {
+            const auto facePath=path;
+            if (!centered && s.kind == SurfaceKind::Refract && s.material != "AIR" && i + 1 < sys.surfaces.size()) {
                 auto& back = sys.surfaces[i + 1];
                 for (int k = 100; k >= 0; --k) {
-                    double y = (2. * k / 100 - 1) * std::min(s.semiDiameter, back.semiDiameter);
+                    double y = (2. * k / 100 - 1) * std::min(clear[i], clear[i+1]);
                     path.lineTo(map(verts[i + 1] + sag(back, 0, y), y));
                 }
                 path.closeSubpath();
                 p.fillPath(path, QColor(100, 163, 212, 55));
             }
+            p.drawPath(facePath);
             if (i == sys.stop) {
                 p.setPen(QPen(QColor("#d56055"), 3));
                 p.drawLine(map(verts[i], s.semiDiameter), map(verts[i], s.semiDiameter + 4));
                 p.drawLine(map(verts[i], -s.semiDiameter), map(verts[i], -s.semiDiameter - 4));
             }
         }
-        for (size_t fi = 0; fi < sys.fields.size(); ++fi) {
+        if (d.error.isEmpty()) for (size_t fi = 0; fi < sys.fields.size(); ++fi) {
             p.setPen(QPen(colors[fi % 5], 1.1));
-            for (int j = -6; j <= 6; ++j) {
-                auto t = trace(
-                    sys, cat,
-                    pupilRay(sys, cat, sys.fields[fi], sys.wavelengths[sys.primary].um, 0, j / 6.));
+            const int rays = std::clamp(d.layoutRays,3,101);
+            for (int j = 0; j < rays; ++j) {
+                RayTrace t;
+                try { t = trace(sys,cat,pupilRay(sys,cat,sys.fields[fi],sys.wavelengths[sys.primary].um,0,2.0*j/(rays-1)-1)); }
+                catch(const std::exception&) {continue;}
                 QPolygonF line;
                 for (auto point : t.points)
                     line << map(point.z, point.y);
@@ -386,6 +459,10 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         p.setPen(QPen(QColor("#68a448"), 2));
         p.drawLine(map(sys.imageZ(), -height), map(sys.imageZ(), height));
         p.restore();
+        if (!d.error.isEmpty() || !d.geometryWarning.isEmpty()) {
+            p.setPen(d.error.isEmpty()?QColor("#79530a"):QColor("#9b392e"));
+            p.drawText(QRectF(area.left()+175,area.top()+5,std::max(60.,area.width()-185),48), Qt::TextWordWrap,d.error.isEmpty()?d.geometryWarning:d.error);
+        }
         if (officePresentation) {
             QRectF legend(area.left() + 14, area.top() + 14, 150, 32 + sys.fields.size() * 14);
             p.setPen(QColor("#cbdbea"));
@@ -420,7 +497,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         if (d.spots.empty())
             return;
         const auto& sp = d.spots.at(std::min(size_t(d.field), d.spots.size() - 1));
-        double limit = std::max(.001, sp.maxRadius * 1.15) * 1000 / zoom;
+        double limit = std::max(.001, sp.maxRadius * 1.15) * 1000;
         auto map = axes(-limit, limit, -limit, limit, "X, мкм", "Y, мкм · полихроматическое пятно");
         p.save();
         p.setClipRect(area);
@@ -454,7 +531,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                 for (double value : series)
                     if (std::isfinite(value))
                         limit = std::max(limit, std::abs(value) * 1.1);
-        limit /= zoom;
+
         QFont small = font();
         small.setPixelSize(11);
         p.setFont(small);
@@ -471,24 +548,29 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         for (int plane = 0; plane < 2; ++plane) {
             QRectF panel(area.left() + plane * (panelWidth + gap), 83, panelWidth, height() - 151);
             const auto& curve = plane ? fan.sagittal : fan.tangential;
+            const double xmin = -1/ (zoom*zoomX) + panX*2;
+            const double xmax = 1/ (zoom*zoomX) + panX*2;
+            const double ymin = -limit/(zoom*zoomY) + panY*2*limit;
+            const double ymax = limit/(zoom*zoomY) + panY*2*limit;
+            axes_.push_back({panel,xmin,xmax,ymin,ymax,2,2*limit});
             auto map = [&](double x, double y) {
-                return QPointF(panel.left() + (x + 1) * panel.width() / 2,
-                               panel.center().y() - y / limit * panel.height() / 2);
+                return QPointF(panel.left()+(x-xmin)/(xmax-xmin)*panel.width(),
+                               panel.bottom()-(y-ymin)/(ymax-ymin)*panel.height());
             };
             p.setPen(QColor("#245c8d"));
             p.drawText(QRectF(panel.left(), 61, panel.width(), 18), Qt::AlignCenter,
                        plane ? "Сагиттальная аберрация, мкм" : "Тангенциальная аберрация, мкм");
             for (int tick = 0; tick <= 4; ++tick) {
-                double x = -1 + tick * .5, y = -limit + tick * limit / 2;
+                double x = xmin + (xmax-xmin)*tick/4, y = ymin+(ymax-ymin)*tick/4;
                 if (grid) {
                     p.setPen(QPen(QColor("#e5edf4"), 1));
-                    p.drawLine(map(x, -limit), map(x, limit));
-                    p.drawLine(map(-1, y), map(1, y));
+                    p.drawLine(map(x, ymin), map(x, ymax));
+                    p.drawLine(map(xmin, y), map(xmax, y));
                 }
                 p.setPen(QColor("#637b8e"));
-                p.drawText(QRectF(map(x, -limit).x() - 26, panel.bottom() + 5, 52, 18),
+                p.drawText(QRectF(map(x, ymin).x() - 26, panel.bottom() + 5, 52, 18),
                            Qt::AlignCenter, QString::number(x));
-                p.drawText(QRectF(panel.left() - 54, map(-1, y).y() - 9, 48, 18), Qt::AlignRight,
+                p.drawText(QRectF(panel.left() - 54, map(xmin, y).y() - 9, 48, 18), Qt::AlignRight,
                            QString::number(y, 'g', 4));
             }
             p.setPen(QColor("#d0deec"));
@@ -545,7 +627,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             for (auto point : samples)
                 poly << map(point.x(), point.y());
             p.setPen(QPen(colors[0], 1.6));
-            p.drawPolyline(poly);
+            p.save();p.setClipRect(area);p.drawPolyline(poly);p.restore();
         } else {
             const double side = std::min(area.height(), area.width() * .65);
             area.setSize({side, side});
@@ -562,7 +644,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                 double opd = sample.opd * 1000 / wave.wavelength;
                 auto point = map(sample.px, sample.py);
                 double cell = side * spacing / 2.;
-                p.fillRect(QRectF(point.x() - cell / 2, point.y() - cell / 2, cell + .4, cell + .4),
+                const double cellX = cell*zoom*zoomX, cellY = cell*zoom*zoomY;
+                p.fillRect(QRectF(point.x() - cellX / 2, point.y() - cellY / 2, cellX + .4, cellY + .4),
                            heat(.5 + opd / (2 * limit)));
             }
             p.restore();
@@ -592,6 +675,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                         d.project.workspace["polychromaticDiffraction"].toBool(false)
                             ? "Полихроматическая MTF · выходной зрачок · X/Y"
                             : "Скалярная монохроматическая MTF · X и Y");
+        p.save(); p.setClipRect(area);
         for (int a = 0; a < 2; ++a) {
             QPolygonF line;
             auto& mtf = a ? df.mtfY : df.mtfX;
@@ -600,6 +684,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             p.setPen(QPen(colors[a], 1.6));
             p.drawPolyline(line);
         }
+        p.restore();
     } else if (view == View::PSF || view == View::Detector) {
         std::vector<double> values;
         int nx = 0, ny = 0;
@@ -615,7 +700,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             values = df.psf;
             physicalX = physicalY = df.pixelUm * nx;
             unit = "мкм";
-            summary = "Монохроматическая PSF\nНормированная энергия";
+            summary = d.project.workspace["polychromaticDiffraction"].toBool(false)
+                ? "Полихроматическая PSF\nОбщая шкала изображения" : "Монохроматическая PSF\nНормированная энергия";
         } else {
             if (!d.scene || d.scene->detectors.empty()) {
                 p.drawText(area, Qt::AlignCenter, "Запустите трассировку сцены");
@@ -654,7 +740,10 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                     t = std::log10(1 + 999 * t) / 3;
                 image.setPixelColor(x, ny - 1 - y, heat(t));
             }
-        p.drawImage(area, image);
+        const auto& bounds = axes_.back();
+        const QRectF source((bounds.xmin/physicalX+.5)*nx,(.5-bounds.ymax/physicalY)*ny,
+                            (bounds.xmax-bounds.xmin)/physicalX*nx,(bounds.ymax-bounds.ymin)/physicalY*ny);
+        p.drawImage(area, image, source);
         for (int i = 0; i < 100; ++i)
             p.fillRect(QRectF(area.right() + 15, area.top() + i * area.height() / 100, 12,
                               area.height() / 100 + 1),
@@ -694,7 +783,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         double peak = 0;
         for (double v : s.marginalX) peak = std::max(peak, v);
         for (double v : s.marginalY) peak = std::max(peak, v);
-        auto map = axes(-limit, limit, 0, std::max(1e-12, peak * 1.1) / zoom,
+        auto map = axes(-limit, limit, 0, std::max(1e-12, peak * 1.1),
                         "Координата X / Y, мм", "Мощность по координате, Вт/мм");
         p.save();
         p.setClipRect(area);
@@ -783,6 +872,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             padding = 0;
         }
         auto map = axes(xmin, xmax, ymin - padding, ymax + padding, xl, yl);
+        p.save();p.setClipRect(area);
         for (size_t j = 0; j < curve.y.size(); ++j) {
             p.setPen(QPen(colors[j % 5], 1.6));
             QPolygonF line;
@@ -796,6 +886,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             }
             p.drawPolyline(line);
         }
+        p.restore();
     } else if (view == View::Scene) {
         const auto& scene = d.project.scene;
         Vec3 center;

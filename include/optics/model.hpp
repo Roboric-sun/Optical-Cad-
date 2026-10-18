@@ -87,6 +87,9 @@ bool validField(const SequentialSystem&, const Field&);
 Field angularField(const SequentialSystem&, const Catalog&, Field);
 bool isSolved(const SequentialSystem&, SolveParameter, size_t surface);
 bool imageThicknessLinked(const SequentialSystem&);
+// Central connected clear apertures. Centered adjacent refracting surfaces are
+// trimmed at their first common edge; requested diameters remain unchanged.
+std::vector<double> clearSemiDiameters(const SequentialSystem&);
 // Transactional: failure leaves every cached scalar and constraint unchanged.
 void applySolves(SequentialSystem&);
 // Ray-dependent constraints require the project's actual material catalog.

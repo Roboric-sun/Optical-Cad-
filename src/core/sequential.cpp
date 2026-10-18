@@ -88,11 +88,6 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
                 out.push_back("Некорректная асферика");
         for (double a : s.oddAsphere)
             if (!std::isfinite(a)) out.push_back("Некорректная нечётная асферика");
-        if (!std::isfinite(sag(s, s.semiDiameter, 0))) out.push_back("Нечисловая стрела на краю поверхности");
-        if (s.radius != 0 &&
-            1 - (1 + s.conic) * s.semiDiameter * s.semiDiameter / (s.radius * s.radius) < 0)
-            out.push_back("Апертура выходит за действительную область поверхности " +
-                          std::to_string(i + 1));
         try {
             for (auto w : wavelengths)
                 catalog.get(s.material).index(w.um);
@@ -100,22 +95,11 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
             out.push_back(e.what());
         }
     }
-    for (size_t i = 0; i + 1 < surfaces.size(); ++i) {
-        auto& a = surfaces[i];
-        auto& b = surfaces[i + 1];
-        if (a.decenter.norm2() != 0 || b.decenter.norm2() != 0 || a.tilt.norm2() != 0 ||
-            b.tilt.norm2() != 0 || a.kind == SurfaceKind::Mirror || b.kind == SurfaceKind::Mirror)
-            continue;
-        double radius = std::min(a.semiDiameter, b.semiDiameter);
-        for (int j = 0; j <= 16; ++j) {
-            double y = radius * j / 16;
-            if (a.thickness + sag(b, 0, y) - sag(a, 0, y) < -1e-7) {
-                out.push_back("Поверхности пересекаются: " + std::to_string(i + 1) + " / " +
-                              std::to_string(i + 2));
-                break;
-            }
-        }
-    }
+    const auto clear = clearSemiDiameters(*this);
+    for (size_t i = 0; i < surfaces.size(); ++i)
+        if (!(clear[i] > 1e-9) || !std::isfinite(clear[i]) ||
+            !std::isfinite(sag(surfaces[i], clear[i], 0)))
+            out.push_back("Нет действительной центральной апертуры поверхности " + std::to_string(i + 1));
     return out;
 }
 double sag(const Surface& s, double x, double y) {
@@ -237,6 +221,7 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
     out.power = ray.power;
     double n = 1;
     auto z = sys.vertices();
+    const auto clear = aperture ? clearSemiDiameters(sys) : std::vector<double>{};
     try {
         if (!finite(ray.origin) || !finite(ray.direction) || !std::isfinite(ray.power) || ray.power < 0 ||
             !std::isfinite(ray.wavelength) || ray.wavelength < .2 || ray.wavelength > 5 || sys.surfaces.empty())
@@ -253,6 +238,12 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
                 return out;
             }
             out.opl += n * hit->distance;
+            if (aperture) {
+                const auto local = p.local(hit->point);
+                if (std::hypot(local.x, local.y) > clear[i] + 1e-9) {
+                    out.status = TraceStatus::Vignetted; out.failedSurface = i; return out;
+                }
+            }
             out.points.push_back(hit->point);
             Vec3 next;
             if (s.kind == SurfaceKind::Mirror) {
