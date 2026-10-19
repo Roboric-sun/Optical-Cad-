@@ -90,6 +90,9 @@ std::vector<std::string> Scene::validate(const Catalog& cat) const {
         displayRays > 1000)
         out.push_back("Некорректные пределы трассировки");
     for (auto& s : sources) {
+        if (int(s.shape) < 0 || int(s.shape) > int(SourceShape::Ellipse) ||
+            int(s.distribution) < 0 || int(s.distribution) > int(Distribution::Isotropic))
+            out.push_back("Неизвестный тип источника или распределения");
         if (!finite(s.pose.position) || !finite(s.pose.tilt) ||
             !finite({s.width, s.height, s.power}) || s.width <= 0 || s.height <= 0 ||
             s.power <= 0 || !std::isfinite(s.wavelength) || s.wavelength < 0.2 ||
@@ -99,6 +102,9 @@ std::vector<std::string> Scene::validate(const Catalog& cat) const {
     }
     bool detector = false;
     for (auto& o : objects) {
+        if (int(o.kind) < 0 || int(o.kind) > int(ObjectKind::Prism) ||
+            int(o.interaction) < 0 || int(o.interaction) > int(Interaction::Diffuse))
+            out.push_back("Неизвестный тип тела или взаимодействия");
         if (o.kind == ObjectKind::Prism && (std::min({o.size.x, o.size.y, o.size.z}) < 1e-5 ||
                                             std::max({o.size.x, o.size.y, o.size.z}) > 1e6))
             out.push_back("Размеры призмы должны быть 0.00001…1000000 мм: " + o.name);

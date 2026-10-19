@@ -1,4 +1,4 @@
-#include "optics/model.hpp"
+#include "optimization_internal.hpp"
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -6,10 +6,18 @@
 #include <set>
 
 namespace optics {
+int asphericOrder(VariableParameter p) {
+    if (p >= VariableParameter::A4 && p <= VariableParameter::A10) return 4 + 2 * (int(p) - int(VariableParameter::A4));
+    if (p >= VariableParameter::A12 && p <= VariableParameter::A22) return 12 + 2 * (int(p) - int(VariableParameter::A12));
+    if (p >= VariableParameter::A3 && p <= VariableParameter::A21) return 3 + 2 * (int(p) - int(VariableParameter::A3));
+    return 0;
+}
 double variableValue(const SequentialSystem& s, const OptimizationVariable& v) {
     if (v.parameter == VariableParameter::Defocus)
         return s.defocus;
     const auto& surface = s.surfaces.at(v.surface);
+    const int order = asphericOrder(v.parameter);
+    if (order) return order % 2 ? surface.oddAsphere[(order-3)/2] : surface.asphere[(order-4)/2];
     switch (v.parameter) {
     case VariableParameter::Radius: return surface.radius;
     case VariableParameter::Thickness: return surface.thickness;
@@ -20,17 +28,23 @@ double variableValue(const SequentialSystem& s, const OptimizationVariable& v) {
     default: throw std::invalid_argument("Unknown optimization parameter");
     }
 }
-static void setVariable(SequentialSystem& s, const OptimizationVariable& v, double value) {
+void detail::setVariable(SequentialSystem& s, const OptimizationVariable& v, double value) {
     if (v.parameter == VariableParameter::Defocus) {
         s.defocus = value;
         return;
     }
     auto& surface = s.surfaces.at(v.surface);
+    const int order = asphericOrder(v.parameter);
+    if (order) {
+        if (order % 2) surface.oddAsphere[(order-3)/2] = value;
+        else surface.asphere[(order-4)/2] = value;
+        return;
+    }
     switch (v.parameter) {
     case VariableParameter::Radius: surface.radius = value; break;
     case VariableParameter::Thickness: surface.thickness = value; break;
     case VariableParameter::Conic: surface.conic = value; break;
-    default: surface.asphere[size_t(v.parameter) - size_t(VariableParameter::A4)] = value;
+    default: throw std::invalid_argument("Unknown optimization parameter");
     }
 }
 std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) const {
@@ -40,10 +54,14 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
     if (iterations < 1 || iterations > 100 || pupilGrid < 3 || pupilGrid > 33 ||
         !std::isfinite(minimumThroughput) || minimumThroughput < 0 || minimumThroughput > 1)
         errors.push_back("Некорректные параметры оптимизации");
+    if (int(algorithm) < 0 || int(algorithm) > 1 || starts < 1 || starts > 8)
+        errors.push_back("Некорректный алгоритм или число стартов (1…8)");
+    if (refocus && allFieldsFocus && s.fieldType == FieldType::RealImageHeight)
+        errors.push_back("Общий автофокус не поддерживает поля реальной высоты, зависящие от плоскости изображения");
     std::set<std::pair<int, size_t>> seen;
     for (auto& v : variables) {
         const bool defocus = v.parameter == VariableParameter::Defocus;
-        if (int(v.parameter) < 0 || int(v.parameter) > int(VariableParameter::Defocus) ||
+        if (int(v.parameter) < 0 || int(v.parameter) > int(VariableParameter::A21) ||
             (!defocus && v.surface >= s.surfaces.size()) || !std::isfinite(v.lower) ||
             !std::isfinite(v.upper) || !std::isfinite(v.step) || v.lower >= v.upper ||
             !std::isfinite(v.upper - v.lower) || v.step <= 0 || v.step > v.upper - v.lower)
@@ -63,10 +81,20 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
         errors.push_back("Автофокус конфликтует со связями толщины до изображения");
     double weights = 0;
     for (auto& o : operands) {
-        if (int(o.kind) < 0 || int(o.kind) > int(MeritKind::Throughput) || o.field < -1 ||
+        if (int(o.kind) < 0 || int(o.kind) > int(MeritKind::EdgeThickness) || o.field < -1 ||
             (o.field >= 0 && size_t(o.field) >= s.fields.size()) || !std::isfinite(o.target) ||
-            !std::isfinite(o.scale) || o.scale <= 0 || !std::isfinite(o.weight) || o.weight <= 0)
+            !std::isfinite(o.scale) || o.scale <= 0 || !std::isfinite(o.weight) || o.weight <= 0 ||
+            !std::isfinite(o.frequency) || !std::isfinite(o.height) || o.surface > 499)
             errors.push_back("Некорректный критерий, поле, масштаб или вес");
+        if ((o.kind == MeritKind::MTFX || o.kind == MeritKind::MTFY) &&
+            (!std::isfinite(o.frequency) || o.frequency < 0 || pupilGrid < 33))
+            errors.push_back("MTF требует частоты ≥ 0 и сетки зрачка 33");
+        if (o.kind == MeritKind::EdgeThickness &&
+            (s.surfaces.size()<2 || o.surface >= s.surfaces.size()-1 || !std::isfinite(o.height) || o.height < 0))
+            errors.push_back("Толщина края требует пару поверхностей и высоту ≥ 0");
+        if(hasCoordinates(s) && o.kind!=MeritKind::SpotRMS && o.kind!=MeritKind::CentroidX &&
+           o.kind!=MeritKind::CentroidY && o.kind!=MeritKind::Throughput)
+            errors.push_back("В локальных системах доступны геометрическое пятно, центры и пропускание");
         weights += o.weight;
     }
     if (!std::isfinite(weights))
@@ -136,9 +164,13 @@ MeritEvaluation evaluateMerit(const SequentialSystem& s, const Catalog& c,
         }
     }
     MeritEvaluation out;
-    double sum = 0, weights = 0;
-    for (auto o : p.operands) {
-        auto value = [&](size_t f) {
+    double weights = 0;
+    for (const auto& o : p.operands) weights += o.weight;
+    std::map<size_t, Diffraction> diffractionCache;
+    std::optional<AnalysisCurve> distortionCache;
+    std::map<std::pair<size_t,size_t>,double> waveCache;
+    for (const auto& o : p.operands) {
+        auto value = [&](size_t f, size_t wave) {
             switch (o.kind) {
             case MeritKind::SpotRMS:
             case MeritKind::CentroidX:
@@ -146,8 +178,7 @@ MeritEvaluation evaluateMerit(const SequentialSystem& s, const Catalog& c,
                 const auto& sp = spots.at(f);
                 double power = 0;
                 for (auto a : sp.samples) power += a.power;
-                if (power <= 0)
-                    throw std::runtime_error("Пятно не содержит энергии");
+                if (power <= 0) throw std::runtime_error("Пятно не содержит энергии");
                 return o.kind == MeritKind::SpotRMS ? sp.rms :
                        o.kind == MeritKind::CentroidX ? sp.centroid.x : sp.centroid.y;
             }
@@ -155,34 +186,80 @@ MeritEvaluation evaluateMerit(const SequentialSystem& s, const Catalog& c,
             case MeritKind::EFL: return paraxial(s, c, s.wavelengths[s.primary].um).efl;
             case MeritKind::BFL: return paraxial(s, c, s.wavelengths[s.primary].um).bfl;
             case MeritKind::ImageDistance: return s.imageZ();
+            case MeritKind::TotalTrack: return s.vertices().back();
+            case MeritKind::EdgeThickness: {
+                const auto& a=s.surfaces[o.surface]; const auto& b=s.surfaces[o.surface+1];
+                if(a.decenter.norm2()!=0 || b.decenter.norm2()!=0 || a.tilt.norm2()!=0 || b.tilt.norm2()!=0)
+                    throw std::invalid_argument("Толщина края определена только для соосных поверхностей");
+                if(o.height>std::min(a.semiDiameter,b.semiDiameter))
+                    throw std::invalid_argument("Высота края превышает заданный полудиаметр");
+                return a.thickness+sag(b,0,o.height)-sag(a,0,o.height);
+            }
+            case MeritKind::WavefrontRMS: {
+                const auto key=std::make_pair(f,wave);
+                if(!waveCache.contains(key)) {
+                    const auto field=angularField(s,c,s.fields[f]);
+                    auto monochromatic=s; monochromatic.primary=wave;monochromatic.fieldType=FieldType::Angle;
+                    waveCache[key]=wavefront(monochromatic,c,field,p.pupilGrid).rms;
+                }
+                return waveCache.at(key);
+            }
+            case MeritKind::Distortion:
+                if(!distortionCache)distortionCache=distortion(s,c);
+                return distortionCache->y.at(0).at(f);
+            case MeritKind::MTFX:
+            case MeritKind::MTFY: {
+                if(!diffractionCache.contains(f))
+                    diffractionCache[f]=polychromaticDiffraction(s,c,s.fields[f],64,p.pupilGrid);
+                const auto& d=diffractionCache.at(f);
+                const auto& mtf=o.kind==MeritKind::MTFX ? d.mtfX : d.mtfY;
+                if(o.frequency>d.frequency.back())
+                    throw std::invalid_argument("Частота MTF вне рассчитанного диапазона; экстраполяция не выполняется");
+                auto high=std::lower_bound(d.frequency.begin(),d.frequency.end(),o.frequency);
+                const auto index=size_t(high-d.frequency.begin());
+                if(index==0)return mtf.front();
+                const double t=(o.frequency-d.frequency[index-1])/(d.frequency[index]-d.frequency[index-1]);
+                return mtf[index-1]*(1-t)+mtf[index]*t;
+            }
             }
             throw std::invalid_argument("Unknown merit operand");
         };
         const bool global = o.kind == MeritKind::EFL || o.kind == MeritKind::BFL ||
-                            o.kind == MeritKind::ImageDistance;
-        double mean = 0, squares = 0, fieldWeights = 0;
-        for (size_t f = 0; f < s.fields.size(); ++f) {
-            if (o.field >= 0 && f != size_t(o.field) && !global) continue;
-            const double v = value(f), w = global || o.field >= 0 ? 1 : s.fields[f].weight;
-            const double residual = (v - o.target) / o.scale;
-            mean += w * v;
-            squares += w * residual * residual;
-            fieldWeights += w;
-            if (global || o.field >= 0) break;
+                            o.kind == MeritKind::ImageDistance || o.kind == MeritKind::TotalTrack ||
+                            o.kind == MeritKind::EdgeThickness;
+        double fieldWeights=0, waveWeights=0;
+        for(size_t f=0;f<s.fields.size();++f)
+            if(global || o.field<0 || f==size_t(o.field)) {
+                fieldWeights+=global || o.field>=0 ? 1 : s.fields[f].weight;
+                if(global)break;
+            }
+        for(const auto& w:s.wavelengths)waveWeights+=w.weight;
+        double mean=0, contribution=0;
+        for(size_t f=0;f<s.fields.size();++f) {
+            if(!global && o.field>=0 && f!=size_t(o.field))continue;
+            const double fw=(global || o.field>=0 ? 1 : s.fields[f].weight)/fieldWeights;
+            const size_t waves=o.kind==MeritKind::WavefrontRMS ? s.wavelengths.size() : 1;
+            for(size_t w=0;w<waves;++w) {
+                const double sampleWeight=fw*(o.kind==MeritKind::WavefrontRMS ? s.wavelengths[w].weight/waveWeights : 1);
+                const double v=value(f,w), residual=(v-o.target)/o.scale;
+                const double weighted=std::sqrt(o.weight/weights)*std::sqrt(sampleWeight)*residual;
+                if(!std::isfinite(v) || !std::isfinite(weighted))
+                    throw std::runtime_error("Функция качества не имеет конечного значения");
+                out.residuals.push_back(weighted);
+                mean+=sampleWeight*v;
+                contribution+=o.weight*sampleWeight*residual*residual;
+            }
+            if(global)break;
         }
-        const double contribution = o.weight * squares / fieldWeights;
-        if (!std::isfinite(contribution) || !std::isfinite(mean))
-            throw std::runtime_error("Функция качества не имеет конечного значения");
-        out.values.push_back(mean / fieldWeights);
-        out.contributions.push_back(contribution);
-        sum += contribution;
-        weights += o.weight;
+        if(!std::isfinite(mean) || !std::isfinite(contribution))throw std::runtime_error("Переполнение функции качества");
+        out.values.push_back(mean); out.contributions.push_back(contribution);
     }
-    out.score = sqrt(sum / weights);
-    if (!std::isfinite(out.score)) throw std::runtime_error("Некорректная функция качества");
+    out.score=0;
+    for(double r:out.residuals)out.score=std::hypot(out.score,r);
+    if(!std::isfinite(out.score))throw std::runtime_error("Некорректная функция качества");
     return out;
 }
-OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const OptimizationPlan& p,
+OptimizationResult detail::coordinateOptimize(SequentialSystem& s, const Catalog& c, const OptimizationPlan& p,
                             std::function<bool(size_t, size_t, double)> progress) {
     auto errors = p.validate(s);
     if (errors.empty()) errors = s.validate(c);
@@ -194,7 +271,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
     }
     auto best = s;
     applySolves(best, c);
-    if (p.refocus) autofocus(best, c);
+    if (p.refocus) detail::refocus(best, c, p);
     OptimizationResult out;
     out.before = evaluateMerit(best, c, p).score;
     out.after = out.before;
@@ -220,11 +297,11 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
                                          v.lower, v.upper);
                 if (next == variableValue(original, v)) continue;
                 auto trial = original;
-                setVariable(trial, v, next);
+                detail::setVariable(trial, v, next);
                 ++out.evaluations;
                 try {
                     applySolves(trial, c);
-                    if (p.refocus) autofocus(trial, c);
+                    if (p.refocus) detail::refocus(trial, c, p);
                     double score = evaluateMerit(trial, c, p).score;
                     if (score < out.after) {
                         best = std::move(trial);
@@ -241,6 +318,7 @@ OptimizationResult optimize(SequentialSystem& s, const Catalog& c, const Optimiz
         if (fraction < 1e-5) break;
     }
     if (cancelled()) return out;
+    out.termination = "Координатный поиск завершён";
     s = std::move(best);
     return out;
 }

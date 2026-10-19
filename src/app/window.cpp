@@ -1,9 +1,12 @@
+#include "coordinate_editor.hpp"
+#include "number_input.hpp"
 #include "window.hpp"
 #include "learning_help.hpp"
 #include "office.hpp"
 #include "optimization_editor.hpp"
 #include "solve_editor.hpp"
 #include "field_editor.hpp"
+#include "python_console.hpp"
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
@@ -44,6 +47,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidgetAction>
+#include <QListWidget>
 #include <QtConcurrent>
 #include <algorithm>
 #include <sstream>
@@ -62,7 +66,7 @@ static const QStringList interactions = {"Преломление", "Поглощ
 static const QStringList shapes = {"Точечный", "Прямоугольный", "Эллиптический"};
 static const QStringList distributions = {"Конусное", "Косинусное", "Изотропное"};
 static QDoubleSpinBox* spin(double v, double low, double high, int digits = 4) {
-    auto* s = new QDoubleSpinBox;
+    auto* s = new DecimalSpinBox;
     s->setDecimals(digits);
     s->setRange(low, high);
     s->setValue(v);
@@ -96,6 +100,9 @@ Window::Window(QWidget* parent)
     setDockNestingEnabled(true);
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     auto* file = new QMenu("Файл", this);
+    auto* examples = new QAction("Открыть пример…", this); examples->setObjectName("examplesAction");
+    connect(examples,&QAction::triggered,this,[this]{openExamples();});
+    file->addAction(examples);
     auto* edit = new QMenu("Правка", this);
     auto* viewMenu = new QMenu("Рабочая область", this);
     auto* help = new QMenu("Справка", this);
@@ -112,9 +119,9 @@ Window::Window(QWidget* parent)
         setProject(Project{});
         path_.clear();
     });
-    action(file, "Открыть…", QKeySequence::Open, [this] { open(); });
-    action(file, "Сохранить", QKeySequence::Save, [this] { save(); });
-    action(file, "Сохранить как…", QKeySequence::SaveAs, [this] { save(true); });
+    action(file, "Открыть…", QKeySequence::Open, [this] { open(); })->setObjectName("openAction");
+    action(file, "Сохранить", QKeySequence::Save, [this] { save(); })->setObjectName("saveAction");
+    action(file, "Сохранить как…", QKeySequence::SaveAs, [this] { save(true); })->setObjectName("saveAsAction");
     file->addSeparator();
     action(file, "Выгрузить анализ в CSV…", {}, [this] { exportCSV(); });
     action(file, "Импорт Geopter JSON…", {}, [this] {
@@ -144,6 +151,8 @@ Window::Window(QWidget* parent)
     action(edit, "Повторить", QKeySequence::Redo, [this] { undo(true); })->setObjectName("redoAction");
     auto* analysisMenu = new QMenu("Анализ", this);
     action(analysisMenu, "Одиночный луч…", {}, [this] { rayReport(); });
+    action(analysisMenu,"Первый порядок 4×4…",{},[this]{firstOrderReport();})->setObjectName("firstOrderAction");
+    action(edit,"Локальные системы координат…",{},[this]{coordinates();})->setObjectName("coordinateAction");
     action(analysisMenu, "Параксиальная трассировка", {}, [this] { paraxialReport(); });
     action(analysisMenu, "Описание системы", {}, [this] { prescription(); });
     for (auto v : {View::Layout, View::Spot, View::Fan, View::OPD, View::Wavefront, View::PSF,
@@ -154,18 +163,46 @@ Window::Window(QWidget* parent)
                 changeMode(0);
             addView(v);
         });
+    action(analysisMenu, "Переключить PSF/MTF: спектр / первичная волна", {}, [this] {
+        checkpoint();
+        project_.workspace["polychromaticDiffraction"] = !project_.workspace["polychromaticDiffraction"].toBool(false);
+        changed(false); recalculate();
+        status_->setText(project_.workspace["polychromaticDiffraction"].toBool()
+            ? "PSF/MTF: выходной зрачок, весь спектр, общая физическая сетка"
+            : "PSF/MTF: прежний FFT входного зрачка, первичная волна");
+    })->setObjectName("polychromaticAction");
+    action(file, "Экспорт Geopter JSON…", {}, [this] {
+        try {
+            const auto bytes = exportGeopter(project_);
+            const auto path = QFileDialog::getSaveFileName(this, "Экспорт Geopter", {}, "Geopter (*.json)");
+            if (path.isEmpty()) return;
+            QSaveFile output(path);
+            if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit())
+                throw std::runtime_error("Не удалось сохранить Geopter JSON");
+            status_->setText("Экспортировано. Связи сохранены в расширении Optical CAD; Geopter его не сохраняет.");
+        } catch (const std::exception& e) { error(e); }
+    })->setObjectName("exportGeopterAction");
+    action(help, "Python-консоль", {}, [this] {
+        auto* console = new PythonConsole(project_, [this, revision = revision_](Project p) mutable {
+            if (revision != revision_) throw std::runtime_error("Проект изменился — результат скрипта отклонён. Откройте новую консоль.");
+            if (serializeProject(p) == serializeProject(project_)) return;
+            checkpoint(); project_ = std::move(p); field_ = 0; selected_ = 0; changed();
+            changeMode(project_.mode); revision = revision_; recalculate();
+        }, this);
+        console->setAttribute(Qt::WA_DeleteOnClose); console->show();
+    })->setObjectName("pythonConsoleAction");
     action(help, "Возможности и ограничения", {}, [this] {
         QMessageBox::information(
-            this, "Optical CAD 0.8.1",
+            this, "Optical CAD " OPTICS_RELEASE_LABEL,
             "Собственное C++ ядро · геометрические единицы мм, длины волн мкм, мощность "
-            "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A4…A10, "
+            "Вт.\n\nПоследовательный режим: преломление, сферы, коники, асферика A3…A22, "
             "децентрировка, наклон, автофокус, пятно, OPD, волновой фронт, скалярные "
-            "монохроматические PSF и MTF, тангенциальные и сагиттальные ray "
+            "монохроматические и полихроматические PSF/MTF, Python-консоль, тангенциальные и сагиттальные ray "
             "fan, настраиваемая оптимизация.\n\nНепоследовательный: примитивы, линза и треугольные призмы, источники, "
             "отражение, преломление, диффузное рассеяние, детекторы и баланс "
             "мощности, профили и статистика пятна.\n\nSTEP/IGES, ОПАЛ, поляризация, смешанная трассировка и интеграция с САРУС "
             "ещё не реализованы. Вложенные и пересекающиеся прозрачные тела не "
-            "поддерживаются.\n\nPSF/MTF используют приближение Фраунгофера на входном зрачке и "
+            "поддерживаются.\n\nPSF/MTF: прежний FFT входного зрачка или спектральный выходной зрачок. Оба режима "
             "требуют центрированной системы; проверяйте его применимость. Каталожные модели без "
             "температуры/давления. Полное соответствие Geopter пока не подтверждено.");
     });
@@ -222,7 +259,7 @@ Window::Window(QWidget* parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setFixedHeight(94);
+    scroll->setFixedHeight(120);
     ribbon_ = new QWidget;
     ribbon_->setObjectName("ribbonContents");
     scroll->setWidget(ribbon_);
@@ -259,13 +296,13 @@ Window::Window(QWidget* parent)
     tool("redo", "Повторить", [this] { undo(true); });
     tool("zoomIn", "Увеличить", [this] {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = std::min(8., p->zoom * 1.25);
+            p->setZoom(p->zoom * 1.25);
             p->update();
         }
     });
     tool("zoomOut", "Уменьшить", [this] {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = std::max(.2, p->zoom / 1.25);
+            p->setZoom(p->zoom / 1.25);
             p->update();
         }
     });
@@ -307,22 +344,34 @@ Window::Window(QWidget* parent)
         dock->resize(750, 560);
         dock->show();
     });
+    auto* projection=plotBar_->addAction("ZY / ZX / XY");projection->setObjectName("layoutProjectionAction");
+    projection->setToolTip("Проекция схемы в глобальных координатах: ZY, ZX или XY");
+    connect(projection,&QAction::triggered,this,[this]{if(auto* plot=dynamic_cast<PlotWidget*>(views_->currentWidget());plot && plot->view==View::Layout){plot->layoutProjection=(plot->layoutProjection+1)%3;plot->update();}});
     plotBar_->addSeparator();
     scaleLabel_ = new QLabel("Масштаб:");
     plotBar_->addWidget(scaleLabel_);
-    scaleBox_ = new QDoubleSpinBox;
+    scaleBox_ = new DecimalSpinBox;
     scaleBox_->setObjectName("viewScale");
     scaleBox_->setRange(.2, 8);
     scaleBox_->setValue(1);
     scaleBox_->setSingleStep(.1);
-    scaleBox_->setDecimals(1);
+    scaleBox_->setDecimals(2);
     scaleBox_->setFixedWidth(64);
     plotBar_->addWidget(scaleBox_);
     connect(scaleBox_, &QDoubleSpinBox::valueChanged, this, [this](double scale) {
         if (auto* p = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
-            p->zoom = scale;
+            p->setZoom(scale);
             p->update();
         }
+    });
+    layoutRaysLabel_ = new QLabel("Лучей на поле:"); plotBar_->addWidget(layoutRaysLabel_);
+    layoutRays_ = integerSpin(13,3,101); layoutRays_->setObjectName("layoutRayCount");
+    layoutRays_->setSingleStep(2); layoutRays_->setFixedWidth(64);
+    layoutRays_->setToolTip("Число лучей на схеме. Сетка расчётных лучей задаётся в параметрах системы.");
+    plotBar_->addWidget(layoutRays_);
+    connect(layoutRays_,&QSpinBox::valueChanged,this,[this](int count){
+        project_.workspace["layoutRays"]=count;
+        if(results_) {results_->layoutRays=count; updatePlots(); rebuildTree();}
     });
     displayLabel_ = new QLabel("Лучей отображается:");
     plotBar_->addWidget(displayLabel_);
@@ -523,7 +572,8 @@ Window::Window(QWidget* parent)
                                "A4",
                                "A6",
                                "A8",
-                               "A10"});
+                               "A10", "A12", "A14", "A16", "A18", "A20", "A22",
+                               "A3", "A5", "A7", "A9", "A11", "A13", "A15", "A17", "A19", "A21"});
     configureTable(objects_, {"№", "Имя", "Тип", "Свойство", "X, мм", "Y, мм", "Z, мм", "Rx, °",
                               "Ry, °", "Rz, °", "Ширина, мм", "Высота, мм", "Длина, мм", "R1, мм",
                               "R2, мм", "Материал", "Отражение", "Nx", "Ny"});
@@ -796,12 +846,14 @@ void Window::changeMode(int mode) {
     for (auto* action : plotBar_->actions())
         if (auto* wa = qobject_cast<QWidgetAction*>(action)) {
             QWidget* w = wa->defaultWidget();
-            if (w == fieldBox_ || w == scaleBox_ || w == scaleLabel_)
+            if (w == fieldBox_ || w == scaleBox_ || w == scaleLabel_ || w == layoutRays_ || w == layoutRaysLabel_)
                 action->setVisible(mode == 0);
             if (w == detectorBox_ || w == displayRays_ || w == displayLabel_)
                 action->setVisible(mode == 1);
         }
     {
+        QSignalBlocker raysBlock(layoutRays_);
+        layoutRays_->setValue(std::clamp(project_.workspace["layoutRays"].toInt(13),3,101));
         QSignalBlocker block(displayRays_);
         displayRays_->setValue(project_.scene.displayRays);
     }
@@ -839,6 +891,11 @@ void Window::buildRibbon() {
         b->setEnabled(false);
         b->setToolTip("Ещё не реализовано: " + reason);
     };
+    auto* files = group("Файлы");
+    auto* fileColumn = files->column();
+    files->small(fileColumn,"folder","Открыть…",[this]{open();},"openProjectButton");
+    files->small(fileColumn,"catalog","Примеры…",[this]{openExamples();},"examplesButton");
+    files->small(fileColumn,"save","Сохранить",[this]{save();},"saveProjectButton");
     auto validate = [this] {
         auto errors = project_.mode ? project_.scene.validate(project_.catalog)
                                     : project_.system.validate(project_.catalog);
@@ -931,6 +988,9 @@ void Window::buildRibbon() {
         b->setEnabled(!project_.mode);
         b = g->small(col, "optimize", "Оптимизация по настройкам",
                      [this] { optimize(true); }, "customOptimizeButton");
+        b->setEnabled(!project_.mode);
+        auto* focusColumn=g->column();
+        b=g->small(focusColumn,"focus","Фокус: все поля и волны",[this]{autofocus(true);},"allFieldsFocusButton");
         b->setEnabled(!project_.mode);
         g->small(col, "remove", "Остановить оптимизацию", [this] {
             optimizationCancel_->store(true);
@@ -1034,6 +1094,9 @@ void Window::buildRibbon() {
         unavailable(g->small(col, "step", "Экспорт STEP", {}), "экспорт CAD геометрии");
         g->small(col, "import", "Выгрузка данных", [this] { exportCSV(); }, "csvButton");
         g->small(col, "focus", "Дефокус", [this] { parameters(); });
+        g=group("Координаты");col=g->column();
+        g->small(col,"tilt","Локальные системы…",[this]{coordinates();},"coordinateButton");
+        g->small(col,"paraxial","Первый порядок 4×4",[this]{firstOrderReport();},"firstOrderButton");
         // Extended analyses are on the dedicated Analysis context tab.
     } else {
         auto* g = group("Система");
@@ -1130,43 +1193,18 @@ void Window::fitRibbon() {
     auto* scroll = findChild<QScrollArea*>("ribbonScroll");
     if (!scroll || !ribbon_->layout())
         return;
-    int natural = ribbon_->property("naturalWidth").toInt();
-    if (natural <= 0)
-        natural = ribbon_->layout()->sizeHint().width();
-    natural = std::max(natural, ribbon_->layout()->minimumSize().width());
-    ribbon_->setProperty("naturalWidth", natural);
-    const int available = scroll->viewport()->width() - 8;
-    if (ribbon_->property("availableWidth").toInt() != available) {
-        ribbon_->setProperty("compressionSteps", 0);
-        ribbon_->setProperty("availableWidth", available);
+    // Keep commands readable. The ribbon already lives in a horizontal scroll area.
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    for (auto* button : ribbon_->findChildren<QToolButton*>()) {
+        if (!button->property("ribbonCommand").toBool()) continue;
+        button->setStyleSheet("font-size:13px;font-weight:600");
+        const int size = button->property("largeCommand").toBool() ? 32 : 18;
+        button->setIconSize({size,size}); button->updateGeometry();
     }
-    const int steps = ribbon_->property("compressionSteps").toInt();
-    double scale = std::min(1., double(available) / std::max(1, natural));
-    for (auto* b : ribbon_->findChildren<QToolButton*>()) {
-        if (!b->property("ribbonCommand").toBool())
-            continue;
-        b->setStyleSheet(
-            QString("font-size:%1px").arg(std::max(7, int(std::floor(12 * scale)) - steps)));
-        bool large = b->property("largeCommand").toBool();
-        int size = large ? std::max(18, qRound(32 * scale) - 2 * steps)
-                         : std::max(10, qRound(16 * scale) - steps);
-        b->setIconSize({size, size});
-        b->updateGeometry();
-    }
-    // Each group and command column caches its minimum size. Refresh nested
-    // layouts too, so the scroll area can shrink after changing font metrics.
-    for (auto* layout : ribbon_->findChildren<QLayout*>())
-        layout->invalidate();
+    for (auto* layout : ribbon_->findChildren<QLayout*>()) layout->invalidate();
     ribbon_->layout()->activate();
+    ribbon_->setMinimumWidth(ribbon_->layout()->minimumSize().width());
     ribbon_->updateGeometry();
-    QTimer::singleShot(0, this, [this] {
-        auto* scroll = findChild<QScrollArea*>("ribbonScroll");
-        const int steps = ribbon_->property("compressionSteps").toInt();
-        if (scroll && scroll->horizontalScrollBar()->maximum() > 0 && steps < 6) {
-            ribbon_->setProperty("compressionSteps", steps + 1);
-            fitRibbon();
-        }
-    });
 }
 
 void Window::parkWorkspace() {
@@ -1193,6 +1231,7 @@ void Window::activateWorkspace() {
         editorDock_->setWidget(editors_);
         editorDock_->setVisible(project_.mode == 0);
         if (auto* plot = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
+            for(auto* action:plotBar_->actions())if(action->objectName()=="layoutProjectionAction")action->setVisible(plot->view==View::Layout);
             plotBar_->setParent(plot);
             plotBar_->setGeometry(0, 0, plot->width(), 29);
             plotBar_->show();
@@ -1294,7 +1333,7 @@ void Window::properties(int column) {
         auto* form = new QFormLayout(&dialog);
         QList<QDoubleSpinBox*> values;
         for (int i = 0; i < count; ++i) {
-            auto* value = spin(table->item(row, column + i)->text().toDouble(),
+            auto* value = spin(uiNumber(table->item(row, column + i)->text()),
                                column == 16 ? 0 : -1e6, column == 16 ? 1 : 1e6, 6);
             form->addRow(table->horizontalHeaderItem(column + i)->text(), value);
             values << value;
@@ -1369,7 +1408,7 @@ void Window::rebuildEditors() {
     surfaces_->horizontalHeaderItem(2)->setText("Тип поверхности");
     surfaces_->horizontalHeaderItem(14)->setText(advancedSurfaces_ ? "Покрытие T" : "Покрытие");
     surfaces_->horizontalHeaderItem(11)->setText(advancedSurfaces_ ? "Rx, °" : "Наклон");
-    for (int c : {8, 9, 10, 12, 13, 15, 16, 17, 18, 19})
+    for (int c : {8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35})
         surfaces_->setColumnHidden(c, !advancedSurfaces_);
     surfaces_->setRowCount(s.surfaces.size() + 2);
     for (int row : {0, int(s.surfaces.size() + 1)})
@@ -1416,6 +1455,8 @@ void Window::rebuildEditors() {
                                  v.asphere[2],   v.asphere[3]};
         for (int c = 6; c < 20; ++c)
             set(surfaces_, r + 1, c, num(values[c - 6]));
+        for (int c = 20; c < 36; ++c)
+            set(surfaces_, r + 1, c, num(c < 26 ? v.asphere[c - 16] : v.oddAsphere[c - 26]));
         if (!advancedSurfaces_) {
             set(surfaces_, r + 1, 14,
                 v.transmission == 1 && v.reflectivity == 1
@@ -1543,7 +1584,7 @@ void Window::rebuildTree() {
         auto& s = project_.system;
         auto* params = node(root, "Параметры системы");
         params->setData(0, Qt::UserRole + 1, "parameters");
-        node(params, "Апертура", num(s.pupilDiameter) + " мм", "aperture");
+        node(params, hasCoordinates(s)?"Диаметр STOP":"Апертура", num(s.pupilDiameter) + " мм", "aperture");
         node(params, "Поля зрения", QString::number(s.fields.size()) + " поля", "field");
         node(params, "Длины волн", QString::number(s.wavelengths.size()) + " волны", "wave");
         node(params, "Поляризация", "не учитывается", "polarization");
@@ -1570,6 +1611,7 @@ void Window::rebuildTree() {
                  QString("T %1; R %2").arg(num(v.transmission), num(v.reflectivity)), "coating");
             node(item, "Наклон / децентр.", vector(v.tilt, "°") + " / " + vector(v.decenter, "мм"),
                  "tilt");
+            if(v.coordinates.mode!=CoordinateMode::None)node(item,"Локальная система",QString("CB · режим %1 · возврат %2").arg(int(v.coordinates.mode)).arg(v.coordinates.reference<0?QString("глобальная"):QString::number(v.coordinates.reference+1)),"tilt");
             if (hidden_.contains(int(i)))
                 item->setIcon(2, officeIcon("hidden"));
             if (int(i) == selected_) {
@@ -1578,13 +1620,13 @@ void Window::rebuildTree() {
             }
         }
         QString imagePosition;
-        try { imagePosition = "Z " + num(s.imageZ(project_.catalog)) + " мм"; }
+        try { imagePosition = hasCoordinates(s)?vector(sequentialFrames(s,project_.catalog).image.position,"мм (мир)"):"Z " + num(s.imageZ(project_.catalog)) + " мм"; }
         catch (const std::exception&) { imagePosition = "Ошибка связи параметров"; }
         node(surfaces, QString::number(s.surfaces.size() + 1) + " Изображение", imagePosition, "image");
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
         for (size_t i = 0; i < s.fields.size(); ++i) {
             auto* field =
-                node(rays, QString("Пучок поля %1 %2").arg(s.fields[i].y).arg(QString::fromUtf8(fieldUnit(s.fieldType))), "13 лучей", "fan");
+                node(rays, QString("Пучок поля %1 %2").arg(s.fields[i].y).arg(QString::fromUtf8(fieldUnit(s.fieldType))), QString::number(std::clamp(project_.workspace["layoutRays"].toInt(13),3,101))+" лучей", "fan");
             node(field, "Тип сетки", "меридиональный срез", "grid");
             node(field, "Число лучей", "13", "rays");
             node(field, "Цвет отображения",
@@ -1721,6 +1763,10 @@ void Window::addView(View v) {
         if (id >= 0)
             emit views_->tabCloseRequested(id);
     });
+    connect(plot,&PlotWidget::viewChanged,this,[this,plot](double value){
+        if(views_->currentWidget()==plot) {QSignalBlocker block(scaleBox_);scaleBox_->setValue(value);}
+    });
+    plot->setToolTip("Колесо над графиком — обе оси; над горизонтальной/вертикальной осью — только эта ось. Сброс — стандартный масштаб.");
     plot->officePresentation = true;
     views_->setCurrentIndex(i);
     if (uiReady_) rebuildTree();
@@ -1745,6 +1791,7 @@ void Window::recalculate() {
     results_->project = project_;
     results_->field = field_;
     results_->selected = selected_;
+    results_->layoutRays = std::clamp(project_.workspace["layoutRays"].toInt(13),3,101);
     results_->detector = std::max(0, detectorBox_->currentIndex());
     if (previous && previous->scene) {
         results_->scene = previous->scene;
@@ -1766,12 +1813,16 @@ void Window::recalculate() {
                 }
                 try {
                     results_->wave = wavefront(project_.system, project_.catalog, f);
-                    results_->diffraction = diffraction(project_.system, project_.catalog, f);
+                } catch (const std::exception& e) { results_->waveError = str(e.what()); }
+                try {
+                    results_->diffraction = project_.workspace["polychromaticDiffraction"].toBool(false)
+                        ? polychromaticDiffraction(project_.system, project_.catalog, f)
+                        : diffraction(project_.system, project_.catalog, f);
                 } catch (const std::exception& e) {
-                    results_->waveError = str(e.what());
+                    results_->diffractionError = str(e.what());
                 }
-                results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);
-                results_->curves[1] = fieldCurvature(project_.system, project_.catalog);
+                try {results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);} catch (...) {}
+                try { results_->curves[1] = fieldCurvature(project_.system, project_.catalog); } catch (...) {}
                 try {
                     results_->curves[2] = chromaticFocus(project_.system, project_.catalog);
                 } catch (...) {
@@ -1784,10 +1835,19 @@ void Window::recalculate() {
                     focus =
                         QString("EFL %1 мм · f/%2").arg(p.efl, 0, 'f', 3).arg(p.fNumber, 0, 'f', 2);
                 } catch (...) {
-                    focus = "Параксиальный расчёт неприменим";
+                    try {focus=differentialFirstOrder(project_.system,project_.catalog,project_.system.wavelengths[project_.system.primary].um).afocal ? "Афокальная система · первый порядок 4×4" : "Локальная система · первый порядок 4×4";}
+                    catch(...) {focus="Параксиальный расчёт неприменим";}
                 }
                 if (results_->spots[field_].samples.empty())
                     focus += " · Все лучи отсечены";
+                const auto clear = clearSemiDiameters(resolvedSystem(project_.system,project_.catalog));
+                int trimmed = 0;
+                for(size_t i=0;i<clear.size();++i)
+                    if(clear[i] < project_.system.surfaces[i].semiDiameter-1e-8) ++trimmed;
+                if(trimmed) {
+                    results_->geometryWarning=QString("Края поверхностей обрезаны: %1. Расчёт продолжается; внешние лучи отсекаются.").arg(trimmed);
+                    focus += " · Обрезка краёв: " + QString::number(trimmed);
+                }
                 status_->setText(QString("Режим: последовательный    %1    Полей: %2    Волн: %3   "
                                          " RMS: %4 мкм    Готово")
                                      .arg(focus)
@@ -1836,7 +1896,7 @@ void Window::editSurface(int r, int c) {
         candidate.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -1880,8 +1940,9 @@ void Window::editSurface(int r, int c) {
             dst = &candidate.reflectivity;
             break;
         default:
-            if (c >= 16 && c < 20)
+            if (c >= 16 && c < 26)
                 dst = &candidate.asphere[c - 16];
+            if (c >= 26 && c < 36) dst = &candidate.oddAsphere[c - 26];
         }
         if (!dst)
             return;
@@ -1922,7 +1983,7 @@ void Window::editObject(int r, int c) {
         o.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -1996,7 +2057,7 @@ void Window::editSource(int r, int c) {
         src.name = item->text().toStdString();
     else {
         bool ok;
-        double v = item->text().toDouble(&ok);
+        double v = uiNumber(item->text(), &ok);
         if (!ok || !std::isfinite(v)) {
             rebuildEditors();
             return;
@@ -2102,6 +2163,12 @@ void Window::moveSurface(int step) {
                 if (v.surface == size_t(selected_)) v.surface = size_t(to);
                 else if (v.surface == size_t(to)) v.surface = size_t(selected_);
             }
+    if(candidate.optimization) {
+        const auto mapped=[&](size_t i){return i==size_t(selected_) ? size_t(to) : i==size_t(to) ? size_t(selected_) : i;};
+        auto& operands=candidate.optimization->operands;
+        std::erase_if(operands,[&](const auto& o){return o.kind==MeritKind::EdgeThickness && mapped(o.surface+1)!=mapped(o.surface)+1;});
+        for(auto& o:operands)if(o.kind==MeritKind::EdgeThickness)o.surface=mapped(o.surface);
+    }
     reindexOptimization(candidate, 0, 0, 0);
     std::vector<size_t> map(s.surfaces.size() + 1);
     for (size_t i = 0; i < map.size(); ++i) map[i] = i;
@@ -2184,10 +2251,11 @@ void Window::addSource(SourceShape shape) {
     changed();
     editors_->setCurrentIndex(1);
 }
-void Window::autofocus() {
+void Window::autofocus(bool allFields) {
     try {
         auto candidate = project_.system;
-        optics::autofocus(candidate, project_.catalog);
+        if(allFields)optics::autofocusAllFields(candidate,project_.catalog,candidate.pupilGrid);
+        else optics::autofocus(candidate, project_.catalog);
         checkpoint();
         project_.system = candidate;
         changed();
@@ -2195,6 +2263,28 @@ void Window::autofocus() {
     } catch (const std::exception& e) {
         error(e);
     }
+}
+void Window::coordinates() {
+    if(project_.mode)return;
+    const auto revision=revision_;
+    CoordinateEditor dialog(project_,this);
+    if(dialog.exec()!=QDialog::Accepted)return;
+    try {
+        if(revision!=revision_)throw std::invalid_argument("Проект изменился; откройте редактор координат заново");
+        auto candidate=dialog.system();checkpoint();project_.system=std::move(candidate);changed();recalculate();
+    }catch(const std::exception& e){error(e);}
+}
+void Window::firstOrderReport() {
+    try {
+        const auto d=differentialFirstOrder(project_.system,project_.catalog,project_.system.wavelengths.at(project_.system.primary).um);
+        auto* dialog=new QDialog(this);dialog->setObjectName("firstOrderDialog");dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle("Дифференциальный первый порядок 4×4");dialog->resize(760,460);
+        auto* layout=new QVBoxLayout(dialog);auto* text=new QPlainTextEdit;text->setObjectName("firstOrderText");text->setReadOnly(true);
+        QString report=d.afocal ? "Афокальная система: блок оптической силы близок к нулю.\n" : "Система имеет оптическую силу.\n";
+        report+="Матрица (x, y, n·u, n·v): вход z=0 → локальная плоскость изображения.\nЧисленные центральные производные, шаг 1e-5 мм / рад. Апертуры отключены.\n\n";
+        for(size_t r=0;r<4;++r){for(size_t c=0;c<4;++c)report+=QString::number(d.matrix[4*r+c],'g',10)+"\t";report+="\n";}
+        report+=QString("\nПоказатель выходной среды: %1\nЛокальное направление опорного луча: (%2; %3; %4)\nЭто локальная линеаризация, а не единое EFL для произвольной внеосевой системы.").arg(d.outputIndex).arg(d.chiefDirection.x).arg(d.chiefDirection.y).arg(d.chiefDirection.z);
+        text->setPlainText(report);layout->addWidget(text);auto* close=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(close);connect(close,&QDialogButtonBox::rejected,dialog,&QDialog::close);dialog->show();
+    }catch(const std::exception& e){error(e);}
 }
 void Window::editFields() {
     const auto revision = revision_;
@@ -2221,7 +2311,9 @@ void Window::parameters() {
     form->addRow("Название", name);
     auto* type = new QComboBox;
     type->addItems({"Диаметр входного зрачка, мм", "Диафрагменное число f/#",
-                    "NA в пространстве изображения (параксиально)"});
+                    "NA объекта в воздухе (конечное сопряжение)",
+                    "NA изображения в выходной среде"});
+    if(hasCoordinates(s)){type->setItemText(0,"Диаметр физического STOP, мм");type->setEnabled(false);}
     form->addRow("Апертура", type);
     auto* aperture = spin(s.pupilDiameter, .0001, 100000);
     form->addRow("Значение", aperture);
@@ -2231,7 +2323,7 @@ void Window::parameters() {
     form->addRow("Дефокус, мм", defocus);
     auto* grid = integerSpin(s.pupilGrid, 3, 65);
     form->addRow("Сетка зрачка (нечётное число)", grid);
-    auto* fields = new QTextEdit;
+    auto* fields = new QTextEdit; fields->setObjectName("parameterFields");
     fields->setFixedHeight(95);
     QString fs;
     for (auto f : s.fields) {
@@ -2241,10 +2333,10 @@ void Window::parameters() {
     }
     fields->setPlainText(fs);
     auto* fieldType = new QComboBox; fieldType->setObjectName("parameterFieldType");
-    fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    fieldType->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм", "Реальная высота изображения, мм"});
     fieldType->setCurrentIndex(int(s.fieldType)); form->addRow("Определение поля", fieldType);
     form->addRow("Поля: X Y вес (единицы выбранного типа)\n[ VUX VLX VUY VLY ]", fields);
-    auto* waves = new QTextEdit;
+    auto* waves = new QTextEdit; waves->setObjectName("parameterWavelengths");
     waves->setFixedHeight(95);
     QString ws;
     for (auto w : s.wavelengths)
@@ -2267,7 +2359,7 @@ void Window::parameters() {
             candidate.pupilGrid = grid->value() | 1;
             candidate.fields.clear();
             candidate.wavelengths.clear();
-            std::istringstream fin(fields->toPlainText().toStdString());
+            std::istringstream fin(fields->toPlainText().replace(',', '.').toStdString());
             double x, y, weight;
             std::string line;
             while (std::getline(fin, line)) {
@@ -2286,7 +2378,7 @@ void Window::parameters() {
                 }
                 candidate.fields.push_back(f);
             }
-            std::istringstream win(waves->toPlainText().toStdString());
+            std::istringstream win(waves->toPlainText().replace(',', '.').toStdString());
             double w;
             while (std::getline(win, line)) {
                 if (line.find_first_not_of(" \t\r") == std::string::npos)
@@ -2297,22 +2389,8 @@ void Window::parameters() {
                 candidate.wavelengths.push_back({w, weight});
             }
             candidate.primary = primary->value() - 1;
-            candidate.pupilDiameter = aperture->value();
-            if (type->currentIndex() != 0) {
-                if (candidate.primary >= candidate.wavelengths.size())
-                    throw std::invalid_argument("Первичная волна не существует");
-                double f = std::abs(paraxial(candidate, project_.catalog,
-                                             candidate.wavelengths[candidate.primary].um)
-                                        .efl);
-                if (type->currentIndex() == 1)
-                    candidate.pupilDiameter = f / aperture->value();
-                else {
-                    double na = aperture->value();
-                    if (na >= 1)
-                        throw std::invalid_argument("NA должна быть меньше 1");
-                    candidate.pupilDiameter = 2 * f * tan(asin(na));
-                }
-            }
+            candidate.pupilDiameter = apertureDiameter(candidate, project_.catalog,
+                ApertureType(type->currentIndex()), aperture->value());
             applySolves(candidate, project_.catalog);
             auto errors = candidate.validate(project_.catalog);
             if (!errors.empty())
@@ -2533,7 +2611,10 @@ void Window::optimize(bool configured) {
             if (configured) {
                 auto initial = project.system;
                 const auto& plan = *project.optimization;
-                if (plan.refocus) optics::autofocus(initial, project.catalog);
+                if (plan.refocus) {
+                    if(plan.allFieldsFocus)optics::autofocusAllFields(initial,project.catalog,plan.pupilGrid);
+                    else optics::autofocus(initial,project.catalog);
+                }
                 auto before = evaluateMerit(initial, project.catalog, plan);
                 auto after = evaluateMerit(result.first, project.catalog, plan);
                 report = QString("Безразмерная функция качества: %1 → %2\nПроверок вариантов: %3\n"
@@ -2541,6 +2622,9 @@ void Window::optimize(bool configured) {
                              .arg(result.second.before, 0, 'g', 10)
                              .arg(result.second.after, 0, 'g', 10)
                              .arg(result.second.evaluations).arg(plan.pupilGrid).arg(plan.iterations);
+                report=QString("Алгоритм: %1; стартов: %2\nЗавершение: %3\n")
+                    .arg(plan.algorithm==OptimizationAlgorithm::LevenbergMarquardt ? "DLS / Levenberg–Marquardt" : "Координатный поиск")
+                    .arg(plan.starts).arg(QString::fromStdString(result.second.termination))+report;
                 for (auto v : plan.variables)
                     report += QString("%1 · %2: %3 → %4 [%5…%6]\n")
                                   .arg(v.parameter == VariableParameter::Defocus ? "Система" : QString("S%1").arg(v.surface + 1))
@@ -2555,7 +2639,13 @@ void Window::optimize(bool configured) {
                                   .arg(before.values[i], 0, 'g', 12).arg(after.values[i], 0, 'g', 12)
                                   .arg(o.target, 0, 'g', 12).arg(o.scale, 0, 'g', 12).arg(o.weight, 0, 'g', 12);
                 }
-                report += "\nКритерий после каждого прохода:\n";
+                report += "\nСравнение стартов: до → после; проверок вариантов\n";
+                for(size_t i=0;i<result.second.starts.size();++i) {
+                    const auto& run=result.second.starts[i];
+                    report+=run.valid ? QString("%1: %2 → %3; %4\n").arg(i+1).arg(run.before,0,'g',10).arg(run.after,0,'g',10).arg(run.evaluations)
+                                      : QString("%1: недопустимая начальная геометрия\n").arg(i+1);
+                }
+                report += "\nЛучшая функция качества после проходов:\n";
                 for (size_t i = 0; i < result.second.history.size(); ++i)
                     report += QString("%1: %2\n").arg(i).arg(result.second.history[i], 0, 'g', 12);
             } else {
@@ -2586,7 +2676,8 @@ void Window::optimize(bool configured) {
         auto result = configured
             ? optics::optimize(project.system, project.catalog, *project.optimization,
                                [cancel](size_t, size_t, double) { return !cancel->load(); })
-            : optimizeRadii(project.system, project.catalog);
+            : optimizeRadii(project.system, project.catalog, 12,
+                            [cancel](size_t, size_t, double) { return !cancel->load(); });
         return std::make_pair(project.system, result);
     }));
 }
@@ -2799,18 +2890,52 @@ void Window::save(bool as) {
 void Window::open() {
     if (!mayDiscard())
         return;
-    auto path = QFileDialog::getOpenFileName(this, "Открыть проект", {}, "Optical CAD (*.optcad)");
+    auto path = QFileDialog::getOpenFileName(this, "Открыть проект или Geopter JSON", QFileInfo(path_).absolutePath(), "Оптические проекты (*.optcad *.json);;Optical CAD (*.optcad);;Geopter (*.json)");
     if (path.isEmpty())
         return;
     try {
-        auto p = loadProject(path);
+        Project p;
+        if (path.endsWith(".json",Qt::CaseInsensitive)) {
+            QFile input(path); if(!input.open(QIODevice::ReadOnly)) throw std::runtime_error("Не удалось открыть файл");
+            p=importGeopter(input.readAll());
+        } else p=loadProject(path);
         setProject(std::move(p));
-        path_ = path;
-        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path_).fileName());
+        path_ = path.endsWith(".json",Qt::CaseInsensitive) ? QString() : path;
+        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path).fileName());
     } catch (const std::exception& e) {
         error(e);
     }
 }
+void Window::openExamples() {
+    QDialog dialog(this); dialog.setObjectName("examplesDialog"); dialog.setWindowTitle("Примеры оптических систем");
+    auto* form = new QVBoxLayout(&dialog);
+    auto* info = new QLabel("Выберите готовую систему. Изменения сохраняйте отдельным проектом через «Сохранить как».");
+    info->setWordWrap(true); form->addWidget(info);
+    auto* eye = new QPushButton("Глаз Гульстранда № 1 (6 преломляющих поверхностей)");
+    eye->setObjectName("gullstrandExampleButton"); form->addWidget(eye);
+    connect(eye,&QPushButton::clicked,&dialog,[&]{
+        if(!mayDiscard())return;setProject(gullstrandEyeProject());path_.clear();dialog.accept();
+    });
+    auto* list = new QListWidget; list->setObjectName("exampleList"); form->addWidget(list);
+    const QDir app(QCoreApplication::applicationDirPath());
+    for(const auto& candidate : {app.filePath("../examples"),app.filePath("../../../examples"),QString(OPTICS_EXAMPLES_DIR)}) {
+        const QDir directory(candidate); if(!directory.exists())continue;
+        for(const auto& name : directory.entryList({"*.optcad"},QDir::Files)) {
+            auto* item=new QListWidgetItem(name,list); item->setData(Qt::UserRole,directory.absoluteFilePath(name));
+        }
+        if(list->count())break;
+    }
+    auto* load = new QPushButton("Открыть выбранный пример"); load->setObjectName("openSelectedExample"); form->addWidget(load);
+    auto openSelected=[&]{
+        if(!list->currentItem() || !mayDiscard())return;
+        try {setProject(loadProject(list->currentItem()->data(Qt::UserRole).toString()));path_.clear();dialog.accept();}
+        catch(const std::exception& e){error(e);}
+    };
+    connect(load,&QPushButton::clicked,&dialog,openSelected);
+    connect(list,&QListWidget::itemDoubleClicked,&dialog,openSelected);
+    if(list->count())list->setCurrentRow(0); dialog.resize(660,430); dialog.exec();
+}
+
 void Window::closeEvent(QCloseEvent* e) {
     if (mayDiscard()) {
         cancel_->store(true);
@@ -2884,6 +3009,30 @@ void Window::writeExamples(const QString& directory) {
     image.system.fields = {{0, 0, 1}, {0, 3, 1}, {0, 5, 1}};
     optics::autofocus(image.system, image.catalog);
     saveProject(directory + "/image_height.optcad", image);
+    image.system.name = "Линза — реальная высота изображения";
+    image.system.fieldType = FieldType::RealImageHeight;
+    saveProject(directory + "/real_image_height.optcad", image);
+    Project aspheric;
+    aspheric.system.name = "Линза — чётная и нечётная асферика";
+    aspheric.system.surfaces[0].asphere[4] = 1e-17;
+    aspheric.system.surfaces[1].oddAsphere[0] = 1e-7;
+    aspheric.system.pupilDiameter = 2;
+    aspheric.workspace["advancedSurfaceColumns"] = true;
+    aspheric.workspace["polychromaticDiffraction"] = true;
+    optics::autofocus(aspheric.system, aspheric.catalog);
+    saveProject(directory + "/aspheric_singlet.optcad", aspheric);
+    saveProject(directory + "/gullstrand_eye.optcad", gullstrandEyeProject());
+    auto dls=Project{}; dls.system.name="DLS — фокусировка и форма линзы";
+    optics::autofocus(dls.system,dls.catalog);dls.system.surfaces.back().thickness+=4;
+    auto plan=defaultOptimization(dls.system,dls.catalog);
+    plan.algorithm=OptimizationAlgorithm::LevenbergMarquardt;plan.starts=3;
+    plan.variables.push_back({VariableParameter::Thickness,dls.system.surfaces.size()-1,35,65,1});
+    std::erase_if(plan.variables,[](const auto& v){return v.parameter==VariableParameter::Defocus;});
+    dls.optimization=plan;
+    saveProject(directory+"/dls_focus.optcad",dls);
+    saveProject(directory+"/folded_mirror.optcad",foldedMirrorProject());
+    saveProject(directory+"/coordinate_group.optcad",coordinateGroupProject());
+    saveProject(directory+"/afocal_telescope.optcad",afocalTelescopeProject());
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

@@ -9,6 +9,13 @@ double Material::index(double w) const {
         throw std::invalid_argument("Wavelength outside catalog range: " + name);
     if (name == "AIR")
         return 1;
+    if (schottFormula) {
+        const double q = w * w;
+        double n2 = schott[0] + schott[1] * q, power = 1 / q;
+        for (size_t i = 2; i < schott.size(); ++i) { n2 += schott[i] * power; power /= q; }
+        if (!std::isfinite(n2) || n2 <= 0) throw std::invalid_argument("Invalid Schott index");
+        return sqrt(n2);
+    }
     if (b[0] != 0 || b[1] != 0 || b[2] != 0) {
         double n2 = 1, w2 = w * w;
         for (size_t i = 0; i < 3; ++i) {
@@ -59,6 +66,8 @@ void Catalog::add(Material m) {
     for (double x : m.c)
         if (!std::isfinite(x))
             throw std::invalid_argument("Invalid Sellmeier coefficient");
+    for (double x : m.schott)
+        if (!std::isfinite(x)) throw std::invalid_argument("Invalid Schott coefficient");
     for (double w : {m.minWavelength, (m.minWavelength + m.maxWavelength) / 2, m.maxWavelength})
         m.index(w);
     for (auto& v : materials)
@@ -98,10 +107,14 @@ void Catalog::importAGF(const std::string& text) {
             pending = true;
             coefficients = false;
         } else if (tag == "CD" && pending) {
-            if (formula != 2)
-                throw std::invalid_argument("Only Zemax AGF formula 2 (Sellmeier 1) is supported");
-            if (!(row >> m.b[0] >> m.c[0] >> m.b[1] >> m.c[1] >> m.b[2] >> m.c[2]))
-                throw std::invalid_argument("Invalid AGF CD record");
+            if (formula == 1) {
+                m.schottFormula = true;
+                for (auto& coefficient : m.schott)
+                    if (!(row >> coefficient)) throw std::invalid_argument("Invalid Schott CD record");
+            } else if (formula == 2) {
+                if (!(row >> m.b[0] >> m.c[0] >> m.b[1] >> m.c[1] >> m.b[2] >> m.c[2]))
+                    throw std::invalid_argument("Invalid AGF CD record");
+            } else throw std::invalid_argument("Supported AGF formulas: Schott 1, Sellmeier 2");
             coefficients = true;
         } else if (tag == "LD" && pending) {
             if (!(row >> m.minWavelength >> m.maxWavelength))

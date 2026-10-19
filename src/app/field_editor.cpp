@@ -1,3 +1,4 @@
+#include "number_input.hpp"
 #include "field_editor.hpp"
 #include <QDialogButtonBox>
 #include <QComboBox>
@@ -16,7 +17,7 @@
 
 using namespace optics;
 namespace {
-class FieldDistanceBox : public QDoubleSpinBox {
+class FieldDistanceBox : public DecimalSpinBox {
     QString textFromValue(double value) const override { return locale().toString(value, 'g', 17); }
 };
 }
@@ -27,7 +28,7 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
     auto* layout = new QVBoxLayout(this);
     auto* form = new QFormLayout;
     auto* type = new QComboBox; type->setObjectName("fieldTypeCombo");
-    type->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм"});
+    type->addItems({"Угол объекта, °", "Высота объекта, мм", "Параксиальная высота изображения, мм", "Реальная высота изображения, мм"});
     type->setCurrentIndex(int(project.system.fieldType)); form->addRow("Определение поля", type);
     auto* distance = new FieldDistanceBox; distance->setObjectName("fieldObjectDistance");
     distance->setDecimals(12); distance->setRange(0, 1e8); distance->setValue(project.system.objectDistance);
@@ -122,7 +123,7 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
                 for (int col = 0; col < 7; ++col) {
                     bool ok = false;
                     auto* item = table->item(row, col);
-                    values[col] = item ? item->text().trimmed().replace(',', '.').toDouble(&ok) : 0;
+                    values[col] = item ? uiNumber(item->text(), &ok) : 0;
                     if (!ok || !std::isfinite(values[col]))
                         throw std::invalid_argument("В каждой ячейке нужно конечное число");
                 }

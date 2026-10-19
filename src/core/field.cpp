@@ -4,7 +4,7 @@ namespace optics {
 const char* fieldUnit(FieldType type) { return type == FieldType::Angle ? "°" : "мм"; }
 bool validField(const SequentialSystem& s, const Field& f) {
     if (s.fieldType != FieldType::Angle && s.fieldType != FieldType::ObjectHeight &&
-        s.fieldType != FieldType::ParaxialImageHeight) return false;
+        s.fieldType != FieldType::ParaxialImageHeight && s.fieldType != FieldType::RealImageHeight) return false;
     const double limit = s.fieldType == FieldType::Angle ? 80 : 1e8;
     return finite({f.x, f.y, f.weight}) && std::abs(f.x) <= limit && std::abs(f.y) <= limit &&
            f.weight > 0 && validVignetting(f) &&
@@ -15,6 +15,41 @@ Field angularField(const SequentialSystem& s, const Catalog& c, Field f) {
     if (!validField(s, f) || !std::isfinite(s.objectDistance) || s.objectDistance < 0)
         throw std::invalid_argument("Некорректное поле: высоте объекта требуется конечное расстояние > 0");
     if (s.fieldType == FieldType::Angle) return f;
+    if (s.fieldType == FieldType::RealImageHeight) {
+        auto angular = s; angular.fieldType = FieldType::Angle;
+        auto gaussian = s; gaussian.fieldType = FieldType::ParaxialImageHeight;
+        auto result = angularField(gaussian, c, f);
+        const double wave = s.wavelengths.at(s.primary).um;
+        auto residual = [&](Field trial) {
+            auto path = trace(angular, c, pupilRay(angular, c, trial, wave, 0, 0));
+            if (path.status != TraceStatus::Complete) throw std::invalid_argument("Реальная высота: главный луч не достигает изображения");
+            return path.image - Vec3{f.x, f.y, s.imageZ()};
+        };
+        for (int i = 0; i < 30; ++i) {
+            const auto e = residual(result);
+            if (std::hypot(e.x, e.y) < 1e-8) return result;
+            const double h = 1e-5;
+            auto fx = result, fy = result; fx.x += h; fy.y += h;
+            const auto ex = (residual(fx) - e) / h, ey = (residual(fy) - e) / h;
+            const double det = ex.x * ey.y - ex.y * ey.x;
+            if (std::abs(det) < 1e-14) break;
+            const double dx = (ey.y * e.x - ey.x * e.y) / det;
+            const double dy = (ex.x * e.y - ex.y * e.x) / det;
+            bool improved = false;
+            for (double scale = 1; scale >= 1. / 128; scale /= 2) {
+                auto trial = result; trial.x -= scale * dx; trial.y -= scale * dy;
+                if (!validField(angular, trial)) continue;
+                try {
+                    auto error = residual(trial);
+                    if (std::hypot(error.x, error.y) < std::hypot(e.x, e.y)) {
+                        result = trial; improved = true; break;
+                    }
+                } catch (const std::exception&) {}
+            }
+            if (!improved) break;
+        }
+        throw std::invalid_argument("Реальная высота: подбор угла не сошёлся к заданной точке изображения");
+    }
     double factor = 1;
     if (s.fieldType == FieldType::ParaxialImageHeight) {
         if (s.primary >= s.wavelengths.size()) throw std::invalid_argument("Первичная волна не существует");

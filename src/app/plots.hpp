@@ -30,10 +30,11 @@ struct Results {
     std::array<optics::AnalysisCurve, 4> curves;
     std::optional<optics::SceneTrace> scene;
     std::vector<optics::DetectorStatistics> detectorStats;
-    QString error, waveError, fanError;
+    QString error, waveError, diffractionError, fanError, geometryWarning;
     int field = 0, selected = -1, detector = 0;
     QSet<int> hidden;
     size_t displayRays = 80;
+    int layoutRays = 13;
 };
 QString viewName(View);
 QByteArray rayFanCSV(const optics::RayFan&);
@@ -47,18 +48,30 @@ class PlotWidget : public QWidget {
     View view;
     bool logarithmic = false, grid = true;
     bool officePresentation = false;
+    int layoutProjection=0; // ZY, ZX, XY
     double zoom = 1, yaw = 30, pitch = 20;
+    double zoomX = 1, zoomY = 1, panX = 0, panY = 0;
+    struct AxisView {
+        QRectF rect;
+        double xmin, xmax, ymin, ymax, baseXSpan, baseYSpan;
+    };
+    const std::vector<AxisView>& axisViews() const { return axes_; }
+    void setZoom(double value) { zoom=std::clamp(value,.2,8.); emit viewChanged(zoom); update(); }
     std::function<void(int)> select;
     void setData(std::shared_ptr<Results> data) {
         data_ = std::move(data);
         update();
     }
     void resetView() {
-        zoom = 1;
+        zoom = 1;layoutProjection=0;
+        zoomX = zoomY = 1; panX = panY = 0;
         yaw = 30;
         pitch = 20;
+        emit viewChanged(zoom);
         update();
     }
+  signals:
+    void viewChanged(double zoom);
 
   protected:
     void paintEvent(QPaintEvent*) override;
@@ -71,4 +84,5 @@ class PlotWidget : public QWidget {
     std::shared_ptr<Results> data_;
     QPoint lastMouse;
     std::vector<QPointF> targets;
+    std::vector<AxisView> axes_;
 };

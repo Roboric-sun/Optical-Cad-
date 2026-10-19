@@ -5,10 +5,14 @@
 
 using namespace optics;
 size_t optimizationChecks();
+size_t lmChecks();
+size_t coordinateChecks();
 size_t solveChecks();
 size_t marginalChecks();
 size_t fieldChecks();
 size_t fieldTypeChecks();
+size_t releaseChecks();
+size_t apertureEdgeChecks();
 static size_t count = 0;
 static void check(bool condition, const char* name) {
     ++count;
@@ -172,7 +176,7 @@ int main() {
                       "1.01046945 103.560653\n");
         check(cat.materials.size() == agfBefore + 1, "AGF import");
         try {
-            cat.importAGF("NM BAD 1 0 1.5 60\nCD 1 2 3 4 5 6\n");
+            cat.importAGF("NM BAD 7 0 1.5 60\nCD 1 2 3 4 5 6\n");
             check(false, "Unsupported AGF rejected");
         } catch (const std::invalid_argument&) {
         }
@@ -361,10 +365,14 @@ int main() {
                   "Every prism face closes the solid and blocks incident rays");
         }
         count += optimizationChecks();
+        count += lmChecks();
+        count += coordinateChecks();
         count += solveChecks();
         count += marginalChecks();
         count += fieldChecks();
         count += fieldTypeChecks();
+        count += releaseChecks();
+        count += apertureEdgeChecks();
         std::cout << count << " physical checks passed\n";
         return 0;
     } catch (const std::exception& e) {

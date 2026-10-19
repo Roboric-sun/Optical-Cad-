@@ -6,6 +6,7 @@ class QTableWidget;
 class QSpinBox;
 class QDoubleSpinBox;
 class QCheckBox;
+class QComboBox;
 class QLabel;
 
 QString meritName(optics::MeritKind);
@@ -17,9 +18,10 @@ class OptimizationEditor : public QDialog {
   private:
     Project project_;
     QTableWidget *variables_, *operands_;
-    QSpinBox *iterations_, *grid_;
+    QSpinBox *iterations_, *grid_, *starts_;
+    QComboBox* algorithm_;
     QDoubleSpinBox* survival_;
-    QCheckBox* refocus_;
+    QCheckBox *refocus_, *allFieldsFocus_;
     QLabel* message_ = nullptr;
     void appendVariable(optics::OptimizationVariable);
     void appendOperand(optics::MeritOperand);
