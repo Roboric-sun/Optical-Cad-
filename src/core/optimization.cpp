@@ -92,6 +92,9 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
         if (o.kind == MeritKind::EdgeThickness &&
             (s.surfaces.size()<2 || o.surface >= s.surfaces.size()-1 || !std::isfinite(o.height) || o.height < 0))
             errors.push_back("Толщина края требует пару поверхностей и высоту ≥ 0");
+        if(hasCoordinates(s) && o.kind!=MeritKind::SpotRMS && o.kind!=MeritKind::CentroidX &&
+           o.kind!=MeritKind::CentroidY && o.kind!=MeritKind::Throughput)
+            errors.push_back("В локальных системах доступны геометрическое пятно, центры и пропускание");
         weights += o.weight;
     }
     if (!std::isfinite(weights))

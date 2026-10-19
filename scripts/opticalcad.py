@@ -88,6 +88,9 @@ class Project:
     def autofocus(self, *, all_fields=False, pupil_grid=17):
         return self._request("autofocus", all_fields=all_fields, pupil_grid=pupil_grid)["image_z_mm"]
 
+    def first_order(self, *, step=1e-5):
+        return self._request("first_order", step=step)
+
     def optimize(self):
         return self._request("optimize")
 

@@ -104,6 +104,11 @@ QByteArray serializeProject(const Project& p) {
                                     {"decenter", vector(s.decenter)},
                                     {"tilt", vector(s.tilt)}};
         if (extra) row["oddAsphere"] = numbers(s.oddAsphere);
+        if(s.coordinates.mode!=CoordinateMode::None) {
+            const auto& a=s.coordinates;
+            row["coordinates"]=QJsonObject{{"mode",int(a.mode)},{"order",int(a.order)},
+                {"shift",vector(a.shift)},{"tilt",vector(a.tilt)},{"reference",a.reference}};
+        }
         surfaces.append(row);
     }
     for (auto f : p.system.fields) {
@@ -166,6 +171,7 @@ QByteArray serializeProject(const Project& p) {
         }
         seq["solves"] = solves;
     }
+    if(hasCoordinates(s))seq["pupilDefinition"]="physical-stop-diameter";
     QJsonObject scene{{"name", QString::fromStdString(n.name)},
                       {"objects", objects},
                       {"sources", sources},
@@ -188,7 +194,7 @@ QByteArray serializeProject(const Project& p) {
         for(const auto& o:plan.operands)modernOptimization|=int(o.kind)>int(MeritKind::Throughput);
     }
     QJsonObject root{{"format", "optical-cad"},
-                                     {"version", modernOptimization ? 8 : extended ? 7 : s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
+                                     {"version", hasCoordinates(s) ? 9 : modernOptimization ? 8 : extended ? 7 : s.fieldType != FieldType::Angle ? 6 : vignetting ? 5 : marginal ? 4 : curvature ? 3 : s.solves.empty() ? 1 : 2},
                                      {"mode", p.mode},
                                      {"materials", materials},
                                      {"sequential", seq},
@@ -226,7 +232,7 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         throw std::invalid_argument("Invalid project JSON");
     auto root = doc.object();
-    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6 && root["version"] != 7 && root["version"] != 8))
+    if (root["format"] != "optical-cad" || (root["version"] != 1 && root["version"] != 2 && root["version"] != 3 && root["version"] != 4 && root["version"] != 5 && root["version"] != 6 && root["version"] != 7 && root["version"] != 8 && root["version"] != 9))
         throw std::invalid_argument("Unsupported project format / version");
     Project p;
     p.mode = int(integer(root, "mode", 1));
@@ -283,6 +289,16 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         surf.reflectivity = number(j, "reflectivity");
         surf.decenter = readVector(j["decenter"]);
         surf.tilt = readVector(j["tilt"]);
+        if(j.contains("coordinates")) {
+            if(root["version"].toInt()<9 || !j["coordinates"].isObject())throw std::invalid_argument("Coordinate metadata requires format 9");
+            const auto a=j["coordinates"].toObject();auto& change=surf.coordinates;
+            change.mode=CoordinateMode(integer(a,"mode",3));change.order=CoordinateOrder(integer(a,"order",1));
+            change.shift=readVector(a["shift"]);change.tilt=readVector(a["tilt"]);
+            const double reference=number(a,"reference");
+            if(reference < -1 || reference >= s.surfaces.size() || std::floor(reference)!=reference)
+                throw std::invalid_argument("Coordinate reference must precede its surface");
+            change.reference=int(reference);
+        }
         auto a = j["asphere"].toArray();
         if (a.size() != 4 && !(root["version"].toInt() >= 7 && a.size() == 10))
             throw std::invalid_argument("Invalid asphere array");
@@ -301,6 +317,8 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         }
         s.surfaces.push_back(surf);
     }
+    if(hasCoordinates(s) && (root["version"].toInt()<9 || seq["pupilDefinition"]!="physical-stop-diameter"))throw std::invalid_argument("Coordinate projects require explicit physical STOP diameter");
+    if(!hasCoordinates(s) && seq.contains("pupilDefinition"))throw std::invalid_argument("Unexpected coordinate pupil definition");
     if (seq.contains("solves")) {
         if (root["version"] == 1) throw std::invalid_argument("Solves require project format 2 or newer");
         if (!seq["solves"].isArray() || seq["solves"].toArray().size() > 1000)
@@ -401,7 +419,8 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
             throw std::invalid_argument("Invalid optimization settings");
         auto j = root["optimization"].toObject();
         OptimizationPlan plan;
-        const bool modern=root["version"].toInt()>=8;
+        const bool modern=root["version"].toInt()==8 || j.contains("algorithm") || j.contains("starts") || j.contains("allFieldsFocus");
+        if(modern && root["version"].toInt()<8)throw std::invalid_argument("New optimizer metadata requires format 8");
         if(modern) {
             plan.algorithm=OptimizationAlgorithm(integer(j,"algorithm",1));
             plan.starts=integer(j,"starts",8);

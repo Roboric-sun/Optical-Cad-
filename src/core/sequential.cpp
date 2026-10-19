@@ -9,6 +9,7 @@ std::vector<double> SequentialSystem::vertices(const Catalog& c) const {
     return solves.empty() ? vertices() : resolvedSystem(*this, c).vertices();
 }
 double SequentialSystem::imageZ() const {
+    if(hasCoordinates(*this))throw std::invalid_argument("У локального изображения нет единой глобальной Z; используйте sequentialFrames().image");
     if (!solves.empty()) return resolvedSystem(*this).imageZ();
     double z = defocus;
     for (auto& s : surfaces)
@@ -58,6 +59,7 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
         out.push_back("Некорректные поля или длины волн");
     if (pupilGrid < 3 || pupilGrid > 65)
         out.push_back("Сетка зрачка должна быть 3…65");
+    if(hasCoordinates(*this) && fieldType!=FieldType::Angle && fieldType!=FieldType::ObjectHeight)out.push_back("Локальные системы поддерживают углы и высоты объекта; высоты изображения ещё не поддержаны");
     for (auto f : fields) {
         if (!validField(*this, f)) out.push_back("Некорректное поле зрения / тип поля / расстояние объекта");
         else if (fieldType != FieldType::Angle) {
@@ -95,6 +97,7 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
             out.push_back(e.what());
         }
     }
+    try {sequentialFrames(*this);}catch(const std::exception& e){out.push_back(e.what());}
     const auto clear = clearSemiDiameters(*this);
     for (size_t i = 0; i < surfaces.size(); ++i)
         if (!(clear[i] > 1e-9) || !std::isfinite(clear[i]) ||
@@ -139,7 +142,7 @@ static Vec3 sagNormal(const Surface& s, Vec3 p) {
     }
     return Vec3{-derivative * p.x, -derivative * p.y, 1}.unit();
 }
-std::optional<SurfaceHit> intersectSurface(const Surface& s, const Pose& pose, const Ray& ray,
+std::optional<SurfaceHit> intersectFramedSurface(const Surface& s, const RigidFrame& pose, const Ray& ray,
                                            bool aperture) {
     Vec3 o = pose.local(ray.origin), d = pose.inverseRotate(ray.direction);
     std::vector<double> roots;
@@ -206,6 +209,9 @@ std::optional<SurfaceHit> intersectSurface(const Surface& s, const Pose& pose, c
     }
     return {};
 }
+std::optional<SurfaceHit> intersectSurface(const Surface& s,const Pose& pose,const Ray& ray,bool aperture) {
+    return intersectFramedSurface(s,RigidFrame::fromPose(pose),ray,aperture);
+}
 RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool toImage,
                size_t through, bool aperture) {
     if (!sys.solves.empty()) {
@@ -220,21 +226,21 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
     out.points.push_back(ray.origin);
     out.power = ray.power;
     double n = 1;
-    auto z = sys.vertices();
     const auto clear = aperture ? clearSemiDiameters(sys) : std::vector<double>{};
     try {
         if (!finite(ray.origin) || !finite(ray.direction) || !std::isfinite(ray.power) || ray.power < 0 ||
             !std::isfinite(ray.wavelength) || ray.wavelength < .2 || ray.wavelength > 5 || sys.surfaces.empty())
             throw std::invalid_argument("Invalid ray");
         ray.direction = ray.direction.unit();
+        const auto frames=sequentialFrames(sys);
         for (size_t i = 0; i < sys.surfaces.size() && i <= through; ++i) {
             auto& s = sys.surfaces[i];
-            Pose p{{s.decenter.x, s.decenter.y, z[i] + s.decenter.z}, s.tilt};
-            auto hit = intersectSurface(s, p, ray, aperture);
+            const auto& p=frames.surfaces.at(i);
+            auto hit = intersectFramedSurface(s, p, ray, aperture);
             if (!hit) {
                 out.failedSurface = i;
                 out.status =
-                    intersectSurface(s, p, ray, false) ? TraceStatus::Vignetted : TraceStatus::Miss;
+                    intersectFramedSurface(s, p, ray, false) ? TraceStatus::Vignetted : TraceStatus::Miss;
                 return out;
             }
             out.opl += n * hit->distance;
@@ -268,16 +274,18 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
         out.exitDirection = ray.direction;
         out.index = n;
         if (toImage) {
-            if (std::abs(ray.direction.z) < 1e-12) {
+            const auto origin=frames.image.local(ray.origin),direction=frames.image.inverseRotate(ray.direction);
+            if (std::abs(direction.z) < 1e-12) {
                 out.status = TraceStatus::Miss;
                 return out;
             }
-            double t = (sys.imageZ() - ray.origin.z) / ray.direction.z;
+            double t = -origin.z / direction.z;
             if (t < 0) {
                 out.status = TraceStatus::Miss;
                 return out;
             }
             out.image = ray.origin + ray.direction * t;
+            out.imageLocal=frames.image.local(out.image);
             out.points.push_back(out.image);
         }
         out.status = TraceStatus::Complete;
@@ -298,8 +306,8 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
     double start = s.objectDistance > 0 ? -s.objectDistance : -std::max(30.0, s.pupilDiameter * 2);
     Vec3 direction = Vec3{tan(f.x * deg), tan(f.y * deg), 1}.unit();
     double A = 1, B = 0, C = 0, D = 1, n = 1;
-    bool centered = true;
-    for (size_t i = 0; i < s.stop; ++i) {
+    bool centered = !hasCoordinates(s);
+    for (size_t i = 0; centered && i < s.stop; ++i) {
         auto& a = s.surfaces[i];
         if (a.kind == SurfaceKind::Mirror || a.tilt.norm2() > 0 || a.decenter.norm2() > 0) {
             centered = false;
@@ -321,7 +329,14 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
         throw std::invalid_argument("Stop is at a pupil singularity");
     double physicalRadius = s.pupilDiameter / 2 * magnification;
     double ax = px * physicalRadius, ay = py * physicalRadius;
-    const double stopZ = vertices.at(s.stop) + s.surfaces.at(s.stop).decenter.z;
+    const auto frames=sequentialFrames(s);
+    const bool localCoordinates=hasCoordinates(s);
+    if(localCoordinates && s.objectDistance==0) {
+        const auto& frame=frames.surfaces.front();const double r=clearSemiDiameters(s).front();
+        const double margin=r*(std::abs(frame.basis[0].z)+std::abs(frame.basis[1].z))+std::abs(sag(s.surfaces.front(),r,0)*frame.basis[2].z);
+        start=std::min(start,frame.position.z-margin-1);
+    }
+    const double stopZ = localCoordinates?0:vertices.at(s.stop) + s.surfaces.at(s.stop).decenter.z;
     auto make = [&](double x, double y) {
         Vec3 target{x, y, stopZ};
         Ray ray;
@@ -336,8 +351,8 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
         ray.wavelength = w;
         return ray;
     };
-    Pose stopPose{{s.surfaces[s.stop].decenter.x, s.surfaces[s.stop].decenter.y, stopZ},
-                  s.surfaces[s.stop].tilt};
+    const auto& stopPose=frames.surfaces.at(s.stop);
+    if(localCoordinates){const auto target=stopPose.world({px*physicalRadius,py*physicalRadius,0});ax=target.x;ay=target.y;}
     auto residual = [&](double x, double y) -> std::optional<Vec3> {
         auto t = trace(s, c, make(x, y), false, s.stop, false);
         if (t.status != TraceStatus::Complete)
@@ -396,6 +411,7 @@ double apertureDiameter(const SequentialSystem& sys, const Catalog& c, ApertureT
 }
 Paraxial paraxial(const SequentialSystem& s, const Catalog& cat, double w) {
     if (!s.solves.empty()) return paraxial(resolvedSystem(s, cat), cat, w);
+    if(hasCoordinates(s))throw std::invalid_argument("Для локальных систем используйте дифференциальный первый порядок");
     double A = 1, B = 0, C = 0, D = 1, n = 1;
     for (size_t i = 0; i < s.surfaces.size(); ++i) {
         auto& surf = s.surfaces[i];
@@ -417,6 +433,7 @@ Paraxial paraxial(const SequentialSystem& s, const Catalog& cat, double w) {
     return {-n / C, -n * A / C, std::abs(n / C) / s.pupilDiameter, {A, B, C, D}};
 }
 double autofocus(SequentialSystem& s, const Catalog& c) {
+    if(hasCoordinates(s))throw std::invalid_argument("Автофокус локальных систем ещё не поддержан; оптимизируйте последний промежуток по RMS");
     if (s.surfaces.empty() || s.fields.empty() || s.primary >= s.wavelengths.size())
         throw std::invalid_argument("Autofocus requires surfaces, fields and a primary wavelength");
     if (!s.solves.empty()) {

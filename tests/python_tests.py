@@ -58,4 +58,13 @@ with tempfile.TemporaryDirectory() as tmp:
     assert Project.load(tmp / "dls.optcad",executable=binary).data==dls.data
     common=Project.load(root / "examples/singlet.optcad",executable=binary)
     assert common.autofocus(all_fields=True,pupil_grid=9)>0
-print("Python integration: DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")
+    for name in ("folded_mirror", "coordinate_group", "afocal_telescope"):
+        model=Project.load(root / f"examples/{name}.optcad",executable=binary)
+        report=model.analyze(pupil_grid=9)
+        assert report["fields"][0]["survived"]>0
+        matrix=model.first_order()
+        assert len(matrix["matrix"])==4
+        if name=="afocal_telescope":assert matrix["afocal"] and abs(matrix["matrix"][2][2]+2)<1e-5
+        model.save(tmp / f"{name}.optcad")
+        assert Project.load(tmp / f"{name}.optcad",executable=binary).data==model.data
+print("Python integration: local coordinates, first order, DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")

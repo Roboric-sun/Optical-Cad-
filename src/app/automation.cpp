@@ -30,6 +30,14 @@ QJsonObject executeRequest(const QJsonObject& request) {
         result["image_z_mm"]=options["all_fields"].toBool() ?
             autofocusAllFields(s,c,option(options,"pupil_grid",s.pupilGrid,3,65)) : autofocus(s,c);
     }
+    else if(operation=="first_order") {
+        const double wavelength=options.contains("wavelength") ? options["wavelength"].toDouble(-1) : s.wavelengths[s.primary].um;
+        const double step=options.contains("step") ? options["step"].toDouble(-1) : 1e-5;
+        const auto d=differentialFirstOrder(s,c,wavelength,step);
+        QJsonArray matrix;for(size_t row=0;row<4;++row)matrix.append(QJsonArray{d.matrix[4*row],d.matrix[4*row+1],d.matrix[4*row+2],d.matrix[4*row+3]});
+        result={{"matrix",matrix},{"afocal",d.afocal},{"output_index",d.outputIndex},
+            {"chief_image_local_mm",vector(d.chiefImage)},{"chief_direction_local",vector(d.chiefDirection)}};
+    }
     else if(operation=="optimize") {
         auto plan=project.optimization.value_or(defaultOptimization(s,c));
         const auto optimized=optimize(s,c,plan);
@@ -42,8 +50,12 @@ QJsonObject executeRequest(const QJsonObject& request) {
         result["starts"]=starts;
     } else if(operation=="analyze") {
         const int grid=option(options,"pupil_grid",s.pupilGrid,3,65);
-        const auto para=paraxial(s,c,s.wavelengths[s.primary].um);
-        result={{"efl_mm",para.efl},{"bfl_mm",para.bfl},{"f_number",para.fNumber},{"image_z_mm",s.imageZ(c)}};
+        try {
+            const auto para=paraxial(s,c,s.wavelengths[s.primary].um);
+            result={{"efl_mm",para.efl},{"bfl_mm",para.bfl},{"f_number",para.fNumber},{"image_z_mm",s.imageZ(c)}};
+        }catch(const std::exception& e){result["paraxial_error"]=QString::fromUtf8(e.what());}
+        const auto frames=sequentialFrames(s,c);result["image_origin_world_mm"]=vector(frames.image.position);
+        result["spot_coordinates"]=hasCoordinates(s)?"local image plane":"world XY";
         QJsonObject indices;
         for(const auto& surface:s.surfaces) indices[QString::fromStdString(surface.material)]=c.get(surface.material).index(s.wavelengths[s.primary].um);
         result["refractive_indices"]=indices;
@@ -63,9 +75,8 @@ QJsonObject executeRequest(const QJsonObject& request) {
             fields.append(item);
         }
         result["fields"]=fields;
-        const auto dist=distortion(s,c);result["distortion_percent"]=values(dist.y[0]);
-        const auto curve=fieldCurvature(s,c);
-        result["tangential_focus_mm"]=values(curve.y[0]);result["sagittal_focus_mm"]=values(curve.y[1]);
+        try {const auto dist=distortion(s,c);result["distortion_percent"]=values(dist.y[0]);}catch(const std::exception& e){result["distortion_error"]=QString::fromUtf8(e.what());}
+        try {const auto curve=fieldCurvature(s,c);result["tangential_focus_mm"]=values(curve.y[0]);result["sagittal_focus_mm"]=values(curve.y[1]);}catch(const std::exception& e){result["field_curvature_error"]=QString::fromUtf8(e.what());}
     } else if(operation=="diffraction") {
         const auto field=option(options,"field",0,0,int(s.fields.size())-1);
         const auto size=option(options,"size",64,32,128);
@@ -76,6 +87,7 @@ QJsonObject executeRequest(const QJsonObject& request) {
     } else if(operation=="trace_rays") {
         const auto system=resolvedSystem(s,c);
         const auto vertices=system.vertices();
+        const auto localFrames=sequentialFrames(system);
         QJsonArray rays;
         std::vector<Vec3> pupils{{0,0,0},{0,.5,0},{0,1,0}};
         if(options.contains("pupil_grid")) {
@@ -104,10 +116,11 @@ QJsonObject executeRequest(const QJsonObject& request) {
             const auto path=trace(system,c,launched,true,SIZE_MAX,false);
             QJsonArray points;
             for(size_t i=1;i<path.points.size();++i) {
-                const auto point=path.points[i]-Vec3{0,0,i<=vertices.size()?vertices[i-1]:system.imageZ()};
+                const auto point=hasCoordinates(system) ? (i<=vertices.size()?localFrames.surfaces[i-1].local(path.points[i]):localFrames.image.local(path.points[i])) : path.points[i]-Vec3{0,0,i<=vertices.size()?vertices[i-1]:system.imageZ()};
                 points.append(vector(point));
             }
-            rays.append(QJsonObject{{"field",double(fi)},{"pupil_x",pupil.x},{"pupil_y",pupil.y},{"complete",path.status==TraceStatus::Complete},
+            QJsonArray world;for(const auto& point:path.points)world.append(vector(point));
+            rays.append(QJsonObject{{"points_world_mm",world},{"image_local_mm",vector(path.imageLocal)},{"field",double(fi)},{"pupil_x",pupil.x},{"pupil_y",pupil.y},{"complete",path.status==TraceStatus::Complete},
                 {"points",points},{"opl_mm",path.opl},{"origin_mm",vector(launched.origin)},
                 {"direction",vector(launched.direction)},{"power",path.power},
                 {"exit_point_mm",vector(path.exitPoint)},{"exit_direction",vector(path.exitDirection)},

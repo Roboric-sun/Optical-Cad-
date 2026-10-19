@@ -40,3 +40,7 @@ p.export_geopter("result.json")
 ## Оптимизация 1.2
 
 `examples/dls_focus.optcad` хранит план DLS в формате 8. `optimize()` возвращает `algorithm` (0 — координатный, 1 — LM), `before`, `after`, `evaluations`, `history`, `termination` и `starts` (valid/before/after/evaluations). В batch операция `autofocus` принимает булев `all_fields` и целый `pupil_grid`. При `all_fields=True` фокус учитывает поля, спектральные веса и мощности лучей. [План, критерии и ограничения](OPTIMIZATION_1_2_RU.md).
+
+## Координаты 1.3
+
+`first_order(step=1e-5)` возвращает дифференциальную матрицу 4×4 до локального изображения и `afocal`. Для CB `analyze()` возвращает геометрию, `image_origin_world_mm`, `spot_coordinates` и явные ошибки неприменимых анализов. `trace_rays` добавляет мировые точки и локальное изображение. [Определения, формат 9, примеры и ограничения](COORDINATES_1_3_RU.md).

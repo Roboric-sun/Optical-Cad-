@@ -239,6 +239,7 @@ QByteArray exportGeopter(const Project& project, bool preserveNative) {
     const auto s = resolvedSystem(project.system, project.catalog);
     const auto errors = s.validate(project.catalog);
     if (!errors.empty()) throw std::invalid_argument(errors.front());
+    if(hasCoordinates(s))throw std::invalid_argument("Geopter export does not support coordinate breaks");
     if (s.fieldType == FieldType::RealImageHeight)
         throw std::invalid_argument("Geopter does not define real image-height fields");
     if(s.objectDistance>=1e7) throw std::invalid_argument("Geopter export: finite object distance conflicts with infinity convention");

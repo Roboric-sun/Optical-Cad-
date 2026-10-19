@@ -1,3 +1,4 @@
+#include "coordinate_editor.hpp"
 #include "number_input.hpp"
 #include "window.hpp"
 #include "learning_help.hpp"
@@ -150,6 +151,8 @@ Window::Window(QWidget* parent)
     action(edit, "Повторить", QKeySequence::Redo, [this] { undo(true); })->setObjectName("redoAction");
     auto* analysisMenu = new QMenu("Анализ", this);
     action(analysisMenu, "Одиночный луч…", {}, [this] { rayReport(); });
+    action(analysisMenu,"Первый порядок 4×4…",{},[this]{firstOrderReport();})->setObjectName("firstOrderAction");
+    action(edit,"Локальные системы координат…",{},[this]{coordinates();})->setObjectName("coordinateAction");
     action(analysisMenu, "Параксиальная трассировка", {}, [this] { paraxialReport(); });
     action(analysisMenu, "Описание системы", {}, [this] { prescription(); });
     for (auto v : {View::Layout, View::Spot, View::Fan, View::OPD, View::Wavefront, View::PSF,
@@ -341,6 +344,9 @@ Window::Window(QWidget* parent)
         dock->resize(750, 560);
         dock->show();
     });
+    auto* projection=plotBar_->addAction("ZY / ZX / XY");projection->setObjectName("layoutProjectionAction");
+    projection->setToolTip("Проекция схемы в глобальных координатах: ZY, ZX или XY");
+    connect(projection,&QAction::triggered,this,[this]{if(auto* plot=dynamic_cast<PlotWidget*>(views_->currentWidget());plot && plot->view==View::Layout){plot->layoutProjection=(plot->layoutProjection+1)%3;plot->update();}});
     plotBar_->addSeparator();
     scaleLabel_ = new QLabel("Масштаб:");
     plotBar_->addWidget(scaleLabel_);
@@ -1088,6 +1094,9 @@ void Window::buildRibbon() {
         unavailable(g->small(col, "step", "Экспорт STEP", {}), "экспорт CAD геометрии");
         g->small(col, "import", "Выгрузка данных", [this] { exportCSV(); }, "csvButton");
         g->small(col, "focus", "Дефокус", [this] { parameters(); });
+        g=group("Координаты");col=g->column();
+        g->small(col,"tilt","Локальные системы…",[this]{coordinates();},"coordinateButton");
+        g->small(col,"paraxial","Первый порядок 4×4",[this]{firstOrderReport();},"firstOrderButton");
         // Extended analyses are on the dedicated Analysis context tab.
     } else {
         auto* g = group("Система");
@@ -1222,6 +1231,7 @@ void Window::activateWorkspace() {
         editorDock_->setWidget(editors_);
         editorDock_->setVisible(project_.mode == 0);
         if (auto* plot = dynamic_cast<PlotWidget*>(views_->currentWidget())) {
+            for(auto* action:plotBar_->actions())if(action->objectName()=="layoutProjectionAction")action->setVisible(plot->view==View::Layout);
             plotBar_->setParent(plot);
             plotBar_->setGeometry(0, 0, plot->width(), 29);
             plotBar_->show();
@@ -1574,7 +1584,7 @@ void Window::rebuildTree() {
         auto& s = project_.system;
         auto* params = node(root, "Параметры системы");
         params->setData(0, Qt::UserRole + 1, "parameters");
-        node(params, "Апертура", num(s.pupilDiameter) + " мм", "aperture");
+        node(params, hasCoordinates(s)?"Диаметр STOP":"Апертура", num(s.pupilDiameter) + " мм", "aperture");
         node(params, "Поля зрения", QString::number(s.fields.size()) + " поля", "field");
         node(params, "Длины волн", QString::number(s.wavelengths.size()) + " волны", "wave");
         node(params, "Поляризация", "не учитывается", "polarization");
@@ -1601,6 +1611,7 @@ void Window::rebuildTree() {
                  QString("T %1; R %2").arg(num(v.transmission), num(v.reflectivity)), "coating");
             node(item, "Наклон / децентр.", vector(v.tilt, "°") + " / " + vector(v.decenter, "мм"),
                  "tilt");
+            if(v.coordinates.mode!=CoordinateMode::None)node(item,"Локальная система",QString("CB · режим %1 · возврат %2").arg(int(v.coordinates.mode)).arg(v.coordinates.reference<0?QString("глобальная"):QString::number(v.coordinates.reference+1)),"tilt");
             if (hidden_.contains(int(i)))
                 item->setIcon(2, officeIcon("hidden"));
             if (int(i) == selected_) {
@@ -1609,7 +1620,7 @@ void Window::rebuildTree() {
             }
         }
         QString imagePosition;
-        try { imagePosition = "Z " + num(s.imageZ(project_.catalog)) + " мм"; }
+        try { imagePosition = hasCoordinates(s)?vector(sequentialFrames(s,project_.catalog).image.position,"мм (мир)"):"Z " + num(s.imageZ(project_.catalog)) + " мм"; }
         catch (const std::exception&) { imagePosition = "Ошибка связи параметров"; }
         node(surfaces, QString::number(s.surfaces.size() + 1) + " Изображение", imagePosition, "image");
         auto* rays = node(root, "Лучи", QString::number(s.fields.size()) + " пучка");
@@ -1824,7 +1835,8 @@ void Window::recalculate() {
                     focus =
                         QString("EFL %1 мм · f/%2").arg(p.efl, 0, 'f', 3).arg(p.fNumber, 0, 'f', 2);
                 } catch (...) {
-                    focus = "Параксиальный расчёт неприменим";
+                    try {focus=differentialFirstOrder(project_.system,project_.catalog,project_.system.wavelengths[project_.system.primary].um).afocal ? "Афокальная система · первый порядок 4×4" : "Локальная система · первый порядок 4×4";}
+                    catch(...) {focus="Параксиальный расчёт неприменим";}
                 }
                 if (results_->spots[field_].samples.empty())
                     focus += " · Все лучи отсечены";
@@ -2252,6 +2264,28 @@ void Window::autofocus(bool allFields) {
         error(e);
     }
 }
+void Window::coordinates() {
+    if(project_.mode)return;
+    const auto revision=revision_;
+    CoordinateEditor dialog(project_,this);
+    if(dialog.exec()!=QDialog::Accepted)return;
+    try {
+        if(revision!=revision_)throw std::invalid_argument("Проект изменился; откройте редактор координат заново");
+        auto candidate=dialog.system();checkpoint();project_.system=std::move(candidate);changed();recalculate();
+    }catch(const std::exception& e){error(e);}
+}
+void Window::firstOrderReport() {
+    try {
+        const auto d=differentialFirstOrder(project_.system,project_.catalog,project_.system.wavelengths.at(project_.system.primary).um);
+        auto* dialog=new QDialog(this);dialog->setObjectName("firstOrderDialog");dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle("Дифференциальный первый порядок 4×4");dialog->resize(760,460);
+        auto* layout=new QVBoxLayout(dialog);auto* text=new QPlainTextEdit;text->setObjectName("firstOrderText");text->setReadOnly(true);
+        QString report=d.afocal ? "Афокальная система: блок оптической силы близок к нулю.\n" : "Система имеет оптическую силу.\n";
+        report+="Матрица (x, y, n·u, n·v): вход z=0 → локальная плоскость изображения.\nЧисленные центральные производные, шаг 1e-5 мм / рад. Апертуры отключены.\n\n";
+        for(size_t r=0;r<4;++r){for(size_t c=0;c<4;++c)report+=QString::number(d.matrix[4*r+c],'g',10)+"\t";report+="\n";}
+        report+=QString("\nПоказатель выходной среды: %1\nЛокальное направление опорного луча: (%2; %3; %4)\nЭто локальная линеаризация, а не единое EFL для произвольной внеосевой системы.").arg(d.outputIndex).arg(d.chiefDirection.x).arg(d.chiefDirection.y).arg(d.chiefDirection.z);
+        text->setPlainText(report);layout->addWidget(text);auto* close=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(close);connect(close,&QDialogButtonBox::rejected,dialog,&QDialog::close);dialog->show();
+    }catch(const std::exception& e){error(e);}
+}
 void Window::editFields() {
     const auto revision = revision_;
     FieldEditor dialog(project_, this);
@@ -2279,6 +2313,7 @@ void Window::parameters() {
     type->addItems({"Диаметр входного зрачка, мм", "Диафрагменное число f/#",
                     "NA объекта в воздухе (конечное сопряжение)",
                     "NA изображения в выходной среде"});
+    if(hasCoordinates(s)){type->setItemText(0,"Диаметр физического STOP, мм");type->setEnabled(false);}
     form->addRow("Апертура", type);
     auto* aperture = spin(s.pupilDiameter, .0001, 100000);
     form->addRow("Значение", aperture);
@@ -2995,6 +3030,9 @@ void Window::writeExamples(const QString& directory) {
     std::erase_if(plan.variables,[](const auto& v){return v.parameter==VariableParameter::Defocus;});
     dls.optimization=plan;
     saveProject(directory+"/dls_focus.optcad",dls);
+    saveProject(directory+"/folded_mirror.optcad",foldedMirrorProject());
+    saveProject(directory+"/coordinate_group.optcad",coordinateGroupProject());
+    saveProject(directory+"/afocal_telescope.optcad",afocalTelescopeProject());
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

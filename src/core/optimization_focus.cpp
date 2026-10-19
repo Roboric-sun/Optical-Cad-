@@ -3,6 +3,7 @@
 
 namespace optics {
 double autofocusAllFields(SequentialSystem& system, const Catalog& catalog, int grid) {
+    if(hasCoordinates(system))throw std::invalid_argument("Общий автофокус локальных систем ещё не поддержан");
     if (grid < 3 || grid > 65 || system.fieldType == FieldType::RealImageHeight)
         throw std::invalid_argument("Общий автофокус: сетка 3…65; реальная высота изображения не поддержана");
     if (imageThicknessLinked(system))

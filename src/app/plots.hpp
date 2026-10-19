@@ -48,6 +48,7 @@ class PlotWidget : public QWidget {
     View view;
     bool logarithmic = false, grid = true;
     bool officePresentation = false;
+    int layoutProjection=0; // ZY, ZX, XY
     double zoom = 1, yaw = 30, pitch = 20;
     double zoomX = 1, zoomY = 1, panX = 0, panY = 0;
     struct AxisView {
@@ -62,7 +63,7 @@ class PlotWidget : public QWidget {
         update();
     }
     void resetView() {
-        zoom = 1;
+        zoom = 1;layoutProjection=0;
         zoomX = zoomY = 1; panX = panY = 0;
         yaw = 30;
         pitch = 20;

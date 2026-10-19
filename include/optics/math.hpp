@@ -68,6 +68,19 @@ struct Pose {
         return position + rotate(p);
     }
 };
+// Orthonormal columns, composed directly: no Euler-angle round trips.
+struct RigidFrame {
+    Vec3 position;
+    std::array<Vec3,3> basis{Vec3{1,0,0},Vec3{0,1,0},Vec3{0,0,1}};
+    Vec3 rotate(Vec3 p) const {return basis[0]*p.x+basis[1]*p.y+basis[2]*p.z;}
+    Vec3 inverseRotate(Vec3 p) const {return {p.dot(basis[0]),p.dot(basis[1]),p.dot(basis[2])};}
+    Vec3 world(Vec3 p) const {return position+rotate(p);}
+    Vec3 local(Vec3 p) const {return inverseRotate(p-position);}
+    static RigidFrame fromPose(const Pose& p) {return {p.position,{p.rotate({1,0,0}),p.rotate({0,1,0}),p.rotate({0,0,1})}};}
+    RigidFrame compose(const RigidFrame& child) const {
+        return {world(child.position),{rotate(child.basis[0]),rotate(child.basis[1]),rotate(child.basis[2])}};
+    }
+};
 inline Vec3 reflect(Vec3 d, Vec3 n) {
     return (d - n * (2 * d.dot(n))).unit();
 }

@@ -111,6 +111,8 @@ class Window : public QMainWindow {
     void addLens();
     void moveSurface(int);
     void autofocus(bool allFields = false);
+    void coordinates();
+    void firstOrderReport();
     void optimize(bool configured = false);
     void optimizationSettings();
     void rayReport();

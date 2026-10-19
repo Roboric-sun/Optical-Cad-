@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             sys.path.insert(0, str(package / "scripts"))
             from opticalcad import Project
             examples = sorted((package / "examples").glob("*.optcad"))
-            if len(examples) != 13:
-                raise RuntimeError(f"Expected 13 examples, found {len(examples)}")
+            if len(examples) != 16:
+                raise RuntimeError(f"Expected 16 examples, found {len(examples)}")
             for path in examples:
                 project = Project.load(path, executable=batch)
                 if not project.validate():
@@ -100,6 +100,14 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
                 raise RuntimeError("Optimized format 8 project did not reopen exactly")
             dls.autofocus(all_fields=True,pupil_grid=9)
             result["batch_dls"]=True
+            for name in ("folded_mirror","coordinate_group","afocal_telescope"):
+                model=Project.load(package / f"examples/{name}.optcad",executable=batch)
+                if not model.analyze(pupil_grid=9)["fields"][0]["survived"]:raise RuntimeError("Coordinate example has no rays")
+                first=model.first_order()
+                if name=="afocal_telescope" and (not first["afocal"] or abs(first["matrix"][2][2]+2)>1e-5):raise RuntimeError("Afocal transfer failed")
+                model.save(base/f"{name}.optcad")
+                if Project.load(base/f"{name}.optcad",executable=batch).data!=model.data:raise RuntimeError("Coordinate example did not reopen")
+            result["batch_coordinates"]=True
         except subprocess.TimeoutExpired as error:
             def decoded(value):
                 return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
@@ -114,4 +122,4 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not result.get("ok"):
         raise RuntimeError(result)
-    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 13 examples, DLS and spectral diffraction")
+    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 16 examples, local coordinates, DLS and spectral diffraction")

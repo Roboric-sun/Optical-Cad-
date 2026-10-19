@@ -225,6 +225,9 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         return;
     }
     const auto& sys = physical;
+    if(hasCoordinates(sys) && view!=View::Layout && view!=View::Spot && view!=View::RMS && view!=View::GeometricMTF && view!=View::Scene && view!=View::Detector && view!=View::DetectorProfile) {
+        p.drawText(area,Qt::AlignCenter|Qt::TextWordWrap,"Этот анализ локальных систем ещё не аттестован. Доступны схема, пятно, RMS, геометрическая MTF и первый порядок 4×4.");return;
+    }
     if (!d.error.isEmpty() && view != View::Layout) {
         p.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, d.error);
         return;
@@ -360,6 +363,48 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         };
     };
     targets.clear();
+    if(view==View::Layout && (hasCoordinates(sys) || layoutProjection!=0)) {
+        try {
+            const auto frames=sequentialFrames(sys,cat);const auto clear=clearSemiDiameters(sys);
+            auto xy=[&](Vec3 p){return layoutProjection==0 ? QPointF(p.z,p.y) : layoutProjection==1 ? QPointF(p.z,p.x) : QPointF(p.x,p.y);};
+            double xmin=0,xmax=0,ymin=0,ymax=0;
+            auto include=[&](Vec3 p){const auto a=xy(p);xmin=std::min(xmin,a.x());xmax=std::max(xmax,a.x());ymin=std::min(ymin,a.y());ymax=std::max(ymax,a.y());};
+            std::vector<std::vector<Vec3>> faces;
+            for(size_t i=0;i<sys.surfaces.size();++i) {
+                for(int meridian=0;meridian<2;++meridian) {
+                    std::vector<Vec3> line;
+                    for(int k=0;k<=80;++k){const double h=(2.*k/80-1)*clear[i];const auto p=frames.surfaces[i].world({meridian?h:0,meridian?0:h,sag(sys.surfaces[i],meridian?h:0,meridian?0:h)});line.push_back(p);include(p);}
+                    faces.push_back(std::move(line));
+                }
+            }
+            const double extent=std::max(3.,sys.pupilDiameter);
+            for(Vec3 p:{Vec3{extent,0,0},Vec3{-extent,0,0},Vec3{0,extent,0},Vec3{0,-extent,0}})include(frames.image.world(p));
+            std::vector<std::pair<size_t,RayTrace>> rays;
+            for(size_t f=0;f<sys.fields.size();++f)for(int j=0;j<std::clamp(d.layoutRays,3,101);++j) {
+                const double h=2.*j/(std::clamp(d.layoutRays,3,101)-1)-1;
+                try {auto path=trace(sys,cat,pupilRay(sys,cat,sys.fields[f],sys.wavelengths[sys.primary].um,layoutProjection==1?h:0,layoutProjection==1?0:h));for(const auto& p:path.points)include(p);rays.push_back({f,std::move(path)});}catch(const std::exception&){}
+            }
+            double sx=std::max(10.,xmax-xmin)*1.15,sy=std::max(10.,ymax-ymin)*1.15;
+            const double aspect=area.width()/area.height();sx=std::max(sx,sy*aspect);sy=std::max(sy,sx/aspect);
+            auto map=axes((xmin+xmax-sx)/2,(xmin+xmax+sx)/2,(ymin+ymax-sy)/2,(ymin+ymax+sy)/2,
+                layoutProjection==2?"X, мм":"Z, мм",layoutProjection==1?"X, мм":"Y, мм");
+            auto project=[&](Vec3 p){const auto a=xy(p);return map(a.x(),a.y());};
+            p.save();p.setClipRect(area);
+            p.setPen(QPen(QColor("#bdcbd6"),1,Qt::DashLine));
+            QPolygonF axis;for(const auto& f:frames.nominal)axis<<project(f.position);axis<<project(frames.image.position);p.drawPolyline(axis);
+            for(size_t i=0;i<sys.surfaces.size();++i) {
+                targets.push_back(project(frames.surfaces[i].position));if(d.hidden.contains(int(i)))continue;
+                p.setPen(QPen(int(i)==d.selected?QColor("#ea9c36"):sys.surfaces[i].kind==SurfaceKind::Mirror?QColor("#555c72"):QColor("#3c7aaa"),int(i)==d.selected?3:2));
+                for(size_t j=0;j<2;++j){QPolygonF line;for(const auto& point:faces[2*i+j])line<<project(point);p.drawPolyline(line);}
+                if(sys.surfaces[i].coordinates.mode!=CoordinateMode::None){p.setPen(QColor("#9467bd"));p.drawText(project(frames.nominal[i].position)+QPointF(5,-8),QString("CB %1").arg(i+1));}
+            }
+            for(const auto& [field,path]:rays){p.setPen(QPen(colors[field%5],1.1));QPolygonF line;for(const auto& point:path.points)line<<project(point);p.drawPolyline(line);}
+            p.setPen(QPen(QColor("#68a448"),2));
+            for(int j=0;j<2;++j)p.drawLine(project(frames.image.world(j?Vec3{-extent,0,0}:Vec3{0,-extent,0})),project(frames.image.world(j?Vec3{extent,0,0}:Vec3{0,extent,0})));
+            p.restore();p.setPen(QColor("#20364d"));p.drawText(QRectF(area.left()+8,area.top()+4,area.width()-16,36),"Глобальная проекция · CB — преобразование координат · зелёный — локальное изображение");
+        }catch(const std::exception& e){p.setPen(QColor("#9b392e"));p.drawText(area,Qt::AlignCenter|Qt::TextWordWrap,QString::fromUtf8(e.what()));}
+        return;
+    }
     if (view == View::Layout) {
         auto verts = sys.vertices();
         if (verts.empty()) {p.drawText(area,Qt::AlignCenter,"Добавьте поверхность");return;}
