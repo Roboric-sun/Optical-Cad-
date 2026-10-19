@@ -77,7 +77,11 @@ size_t coordinateGUIChecks(Window& w,const QString& dir) {
     projection->trigger();check(activeLayout->layoutProjection==1,"Shared toolbar changes current plot projection");
     activeLayout->resetView();check(activeLayout->layoutProjection==0,"Standard view restores the default projection");
     const auto request=QJsonDocument::fromJson(serializeProject(folded)).object();
-    auto rays=executeRequest({{"operation","trace_rays"},{"project",request},{"options",QJsonObject{{"field",0},{"pupils",QJsonArray{QJsonArray{0,0}}}}}})["rays"].toArray();
+    // Qt 6.8 may resolve a single nested QJsonArray initializer as a copy.
+    // Append explicitly so the transport is [[0,0]] on all supported Qt versions.
+    QJsonArray pupils;pupils.append(QJsonArray{0,0});
+    check(pupils.size()==1 && pupils[0].isArray(),"Diagnostic pupil transport is a nested array on every supported Qt");
+    auto rays=executeRequest({{"operation","trace_rays"},{"project",request},{"options",QJsonObject{{"field",0},{"pupils",pupils}}}})["rays"].toArray();
     check(rays[0].toObject()["complete"].toBool() && rays[0].toObject()["points_world_mm"].toArray().size()==4,"Batch diagnostic exposes true global folded intersections");
     near(rays[0].toObject()["image_mm"].toArray()[1].toDouble(),40,1e-8,"Batch world image is on the folded Y plane");
     w.setProject(original);return count;
