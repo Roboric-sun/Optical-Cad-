@@ -1,6 +1,25 @@
 # Optical CAD
 
-[![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=codex%2Fcoordinate-systems)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
+[![Скачать для Windows](https://img.shields.io/badge/Скачать-Windows_x64-0078D4?style=for-the-badge)](https://github.com/Roboric-sun/Optical-Cad-/releases/latest/download/OpticalCAD-Setup-Windows-x64.exe)
+[![Скачать для macOS](https://img.shields.io/badge/Скачать-macOS_Apple_Silicon-333333?style=for-the-badge)](https://github.com/Roboric-sun/Optical-Cad-/releases/latest/download/OpticalCAD-macOS-arm64.zip)
+
+## Скачать и установить
+
+**Windows 10/11 x64:** нажмите кнопку выше, запустите установщик и откройте Optical CAD через меню «Пуск». Qt и библиотеки выполнения входят в пакет; компилятор и Qt SDK не нужны. Установка не требует прав администратора.
+
+**macOS Apple Silicon:** скачайте архив кнопкой выше, распакуйте и откройте `optical_cad.app`. Пакеты пока без сертификата издателя и нотариализации Apple, поэтому система может показать предупреждение безопасности. Для встроенной Python-консоли отдельно нужен Python 3.
+
+Кнопки начинают работать после первой успешной сборки и публикации. Все выпуски и контрольные суммы: [Releases](https://github.com/Roboric-sun/Optical-Cad-/releases).
+
+## Ветки и выпуск программы
+
+- `development` — разработка, весь исходный код и история проекта.
+- `main` — код выпуска и автоматическая сборка установщика. Исходники здесь нужны для сборки.
+- Для выпуска перенесите проверенные изменения из `development` в `main` через Pull Request. После успешных тестов Windows, macOS и расчётного ядра GitHub Actions создаст Release и обновит ссылки кнопок скачивания.
+- Повторный выпуск можно запустить через Actions → Build and validate → Run workflow → `main`.
+
+
+[![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
 
 Версия **1.3.0** оптической системы на C++20 с собственным расчётным ядром и русским интерфейсом Qt 6. Компоновка использует ленту двух режимов, навигатор, табличные редакторы и окна анализа из приложенных документов. Добавлены связи радиусов, кривизн и толщин, расчёт края и общей длины; работают настраиваемая оптимизация с границами переменных, редактор функции качества, профили и статистика детекторов. Есть руководство для начинающего C++ разработчика и консольный учебный пример. Призмы, лучевые аберрации и прежние расчёты сохранены. Полное соответствие Geopter и всему составу полноценного продукта ещё не достигнуто.
 

@@ -1,5 +1,14 @@
 name: Build and validate
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   desktop:
     strategy:
@@ -64,6 +73,44 @@ jobs:
         with:
           name: optical-cad-${{ matrix.os }}
           path: release
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(OpticalCAD VERSION ([0-9.]+)').Matches.Groups[1].Value
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "Optical CAD installed"
+          $process = Start-Process artifacts/OpticalCAD-Setup-Windows-x64.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$destination`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installation failed: $($process.ExitCode)" }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QPA_FONTDIR = "$env:SystemRoot/Fonts"
+          $env:OPTICALCAD_PYTHON = (Get-Command python).Source
+          $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+          $env:QT_PLUGIN_PATH = ""
+          $env:QT_QPA_PLATFORM_PLUGIN_PATH = ""
+          & "$destination/bin/optical_cad.exe" --verify-installation "$env:RUNNER_TEMP/installer-check.json"
+          if ($LASTEXITCODE -ne 0) { throw "Installed application failed" }
+          $report = Get-Content "$env:RUNNER_TEMP/installer-check.json" -Raw | ConvertFrom-Json
+          if (-not $report.ok) { throw "Installed application acceptance failed" }
+          $process = Start-Process "$destination/unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Uninstall failed" }
+      - name: Prepare macOS download
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p artifacts
+          cp release/OpticalCAD-*-macOS-arm64.zip artifacts/OpticalCAD-macOS-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: download-${{ runner.os }}
+          path: |
+            artifacts/OpticalCAD-Setup-Windows-x64.exe
+            artifacts/OpticalCAD-macOS-arm64.zip
+          if-no-files-found: error
   core:
     runs-on: ubuntu-latest
     steps:
@@ -72,3 +119,25 @@ jobs:
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
       - run: ./build/optics_learning 70
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [desktop, core]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: download-*
+          merge-multiple: true
+          path: downloads
+      - name: Publish tested downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: desktop-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          cd downloads
+          sha256sum OpticalCAD-* > SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" OpticalCAD-* SHA256SUMS.txt --target "$RELEASE_SHA" --latest --title "Optical CAD — build ${{ github.run_number }}" --notes "Windows x64: download OpticalCAD-Setup-Windows-x64.exe and run the installer. macOS Apple Silicon: download OpticalCAD-macOS-arm64.zip and extract. Built and tested from main ($RELEASE_SHA). Packages are not signed with a publisher certificate; operating system security prompts may appear. Python scripting requires Python 3 installed separately."
