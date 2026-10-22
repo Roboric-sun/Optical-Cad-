@@ -100,6 +100,9 @@ if(OPTICS_BUILD_GUI)
       find_file(OPTICS_OFFSCREEN_PLUGIN NAMES qoffscreen.dll
         HINTS "${Qt6_DIR}/../../../plugins/platforms" NO_DEFAULT_PATH REQUIRED)
       install(FILES "${OPTICS_OFFSCREEN_PLUGIN}" DESTINATION plugins/platforms)
+      # Ship the MSVC runtime beside the executables for clean Windows PCs.
+      set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
+      include(InstallRequiredSystemLibraries)
       configure_file(cmake/package_windows.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/package_windows.cmake" @ONLY)
       install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/package_windows.cmake")
     endif()

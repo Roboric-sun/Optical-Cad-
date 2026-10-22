@@ -93,8 +93,10 @@ jobs:
           $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
           $env:QT_PLUGIN_PATH = ""
           $env:QT_QPA_PLATFORM_PLUGIN_PATH = ""
-          & "$destination/bin/optical_cad.exe" --verify-installation "$env:RUNNER_TEMP/installer-check.json"
-          if ($LASTEXITCODE -ne 0) { throw "Installed application failed" }
+          $process = Start-Process "$destination/bin/optical_cad.exe" -ArgumentList "--verify-installation `"$env:RUNNER_TEMP/installer-check.json`"" -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/installer-stdout.txt" -RedirectStandardError "$env:RUNNER_TEMP/installer-stderr.txt"
+          Get-Content "$env:RUNNER_TEMP/installer-stdout.txt", "$env:RUNNER_TEMP/installer-stderr.txt"
+          if (Test-Path "$env:RUNNER_TEMP/installer-check.json") { Get-Content "$env:RUNNER_TEMP/installer-check.json" }
+          if ($process.ExitCode -ne 0) { throw "Installed application failed: $($process.ExitCode)" }
           $report = Get-Content "$env:RUNNER_TEMP/installer-check.json" -Raw | ConvertFrom-Json
           if (-not $report.ok) { throw "Installed application acceptance failed" }
           $process = Start-Process "$destination/unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
