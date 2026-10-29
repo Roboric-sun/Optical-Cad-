@@ -15,7 +15,7 @@ class StudyEditor:public QDialog {
  private:
     Project project_,reportProject_;
     int selected_=-1;bool busy_=false,closing_=false;
-    QComboBox* configs_;QLineEdit *name_,*seed_;QDoubleSpinBox *weight_,*limit_;QSpinBox *samples_,*iterations_,*sampleIndex_,*stateIndex_;
+    QComboBox* configs_;QLineEdit *name_,*seed_,*weight_,*limit_;QSpinBox *samples_,*iterations_,*sampleIndex_,*stateIndex_;
     QTableWidget *values_,*materials_,*tolerances_,*compensators_,*correlation_;
     QPlainTextEdit* reportText_;QLabel* message_;QTabWidget* tabs_;QPushButton* save_;QProgressBar* progress_;QTimer* timer_;
     QFutureWatcher<StudyOutcome> watcher_;
