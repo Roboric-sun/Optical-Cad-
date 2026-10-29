@@ -112,6 +112,7 @@ class Window : public QMainWindow {
     void moveSurface(int);
     void autofocus(bool allFields = false);
     void coordinates();
+    void surfaceShape();
     void firstOrderReport();
     void optimize(bool configured = false);
     void optimizationSettings();

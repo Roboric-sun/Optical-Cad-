@@ -16,7 +16,7 @@ RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int 
     Vec3 radial{tan(angles.x * deg), tan(angles.y * deg), 0};
     out.tangentialAxis = radial.norm() > 1e-12 ? radial.unit() : Vec3{0, 1, 0};
     out.sagittalAxis = {out.tangentialAxis.y, -out.tangentialAxis.x, 0};
-    if(hasCoordinates(sys))throw std::invalid_argument("Ray fan локальных систем ещё не аттестован");
+    if(hasCoordinates(sys)||usesAdvancedSurfaces(sys))throw std::invalid_argument("Ray fan локальных систем ещё не аттестован");
     auto chief = trace(sys, cat, pupilRay(sys, cat, field, sys.wavelengths[sys.primary].um, 0, 0));
     if (chief.status != TraceStatus::Complete)
         throw std::runtime_error("Primary chief ray does not reach image");
@@ -103,7 +103,7 @@ static std::optional<WaveSample> waveSample(const SequentialSystem& s, const Cat
 Wavefront wavefront(const SequentialSystem& s, const Catalog& c, Field f, int grid) {
     if (!s.solves.empty()) return wavefront(resolvedSystem(s, c), c, f, grid);
     if (grid < 3 || grid > 129) throw std::invalid_argument("Wavefront grid must be 3–129");
-    if(hasCoordinates(s))throw std::invalid_argument("OPD локальных систем ещё не аттестован; используйте геометрический анализ");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("OPD этих профилей/масок/координат ещё не аттестован; используйте геометрический анализ");
     Wavefront out;
     out.wavelength = s.wavelengths.at(s.primary).um;
     auto cr = pupilRay(s, c, f, out.wavelength, 0, 0);
@@ -241,7 +241,7 @@ Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, in
 Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog& c, Field field,
                                     int size, int grid) {
     auto s = resolvedSystem(sys, c);
-    if(hasCoordinates(s))throw std::invalid_argument("PSF/MTF локальных систем ещё не аттестована");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("PSF/MTF этих профилей/масок/координат ещё не аттестована");
     if (size < 32 || size > 128 || (size & (size - 1)) || grid < size / 2 + 1 || grid > 65)
         throw std::invalid_argument("Exit-pupil diffraction: image 32/64/128, pupil grid 9–65");
     auto errors = s.validate(c);
@@ -438,7 +438,7 @@ OptimizationResult optimizeRadii(SequentialSystem& system, const Catalog& c, siz
     return out;
 }
 AnalysisCurve longitudinalAberration(const SequentialSystem& s, const Catalog& c, int samples) {
-    if(hasCoordinates(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
     if (!s.solves.empty()) return longitudinalAberration(resolvedSystem(s, c), c, samples);
     if (samples < 2 || samples > 1001) throw std::invalid_argument("Longitudinal sample count must be 2–1001");
     AnalysisCurve out;
@@ -458,7 +458,7 @@ AnalysisCurve longitudinalAberration(const SequentialSystem& s, const Catalog& c
     return out;
 }
 AnalysisCurve fieldCurvature(const SequentialSystem& s, const Catalog& c) {
-    if(hasCoordinates(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
     if (!s.solves.empty()) return fieldCurvature(resolvedSystem(s, c), c);
     AnalysisCurve out;
     out.y.resize(2);
@@ -491,7 +491,7 @@ AnalysisCurve fieldCurvature(const SequentialSystem& s, const Catalog& c) {
     return out;
 }
 AnalysisCurve chromaticFocus(const SequentialSystem& s, const Catalog& c, int samples) {
-    if(hasCoordinates(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("Этот осевой анализ локальных систем ещё не аттестован");
     if (!s.solves.empty()) return chromaticFocus(resolvedSystem(s, c), c, samples);
     if (samples < 2 || samples > 1001 || s.primary >= s.wavelengths.size())
         throw std::invalid_argument("Invalid chromatic-focus sampling or primary wavelength");

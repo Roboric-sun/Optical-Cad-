@@ -1,3 +1,4 @@
+#include "shape_editor.hpp"
 #include "coordinate_editor.hpp"
 #include "number_input.hpp"
 #include "window.hpp"
@@ -152,6 +153,7 @@ Window::Window(QWidget* parent)
     auto* analysisMenu = new QMenu("Анализ", this);
     action(analysisMenu, "Одиночный луч…", {}, [this] { rayReport(); });
     action(analysisMenu,"Первый порядок 4×4…",{},[this]{firstOrderReport();})->setObjectName("firstOrderAction");
+    action(edit,"Профиль и апертура поверхности…",{},[this]{surfaceShape();})->setObjectName("shapeAction");
     action(edit,"Локальные системы координат…",{},[this]{coordinates();})->setObjectName("coordinateAction");
     action(analysisMenu, "Параксиальная трассировка", {}, [this] { paraxialReport(); });
     action(analysisMenu, "Описание системы", {}, [this] { prescription(); });
@@ -1095,6 +1097,7 @@ void Window::buildRibbon() {
         g->small(col, "import", "Выгрузка данных", [this] { exportCSV(); }, "csvButton");
         g->small(col, "focus", "Дефокус", [this] { parameters(); });
         g=group("Координаты");col=g->column();
+        g->small(col,"aperture","Профиль и апертура…",[this]{surfaceShape();},"shapeButton");
         g->small(col,"tilt","Локальные системы…",[this]{coordinates();},"coordinateButton");
         g->small(col,"paraxial","Первый порядок 4×4",[this]{firstOrderReport();},"firstOrderButton");
         // Extended analyses are on the dedicated Analysis context tab.
@@ -1584,7 +1587,7 @@ void Window::rebuildTree() {
         auto& s = project_.system;
         auto* params = node(root, "Параметры системы");
         params->setData(0, Qt::UserRole + 1, "parameters");
-        node(params, hasCoordinates(s)?"Диаметр STOP":"Апертура", num(s.pupilDiameter) + " мм", "aperture");
+        node(params, usesPhysicalStop(s)?"Диаметр STOP":"Апертура", num(s.pupilDiameter) + " мм", "aperture");
         node(params, "Поля зрения", QString::number(s.fields.size()) + " поля", "field");
         node(params, "Длины волн", QString::number(s.wavelengths.size()) + " волны", "wave");
         node(params, "Поляризация", "не учитывается", "polarization");
@@ -1611,6 +1614,7 @@ void Window::rebuildTree() {
                  QString("T %1; R %2").arg(num(v.transmission), num(v.reflectivity)), "coating");
             node(item, "Наклон / децентр.", vector(v.tilt, "°") + " / " + vector(v.decenter, "мм"),
                  "tilt");
+            if(v.profile!=SurfaceProfile::Standard || v.aperture.shape!=ApertureShape::Circle || v.aperture.obscuration!=0)node(item,"Профиль / апертура",QString("%1 / %2 · экран %3 мм").arg(int(v.profile)).arg(int(v.aperture.shape)).arg(v.aperture.obscuration),"aperture");
             if(v.coordinates.mode!=CoordinateMode::None)node(item,"Локальная система",QString("CB · режим %1 · возврат %2").arg(int(v.coordinates.mode)).arg(v.coordinates.reference<0?QString("глобальная"):QString::number(v.coordinates.reference+1)),"tilt");
             if (hidden_.contains(int(i)))
                 item->setIcon(2, officeIcon("hidden"));
@@ -2264,6 +2268,12 @@ void Window::autofocus(bool allFields) {
         error(e);
     }
 }
+void Window::surfaceShape() {
+    if(project_.mode || project_.system.surfaces.empty())return;
+    const auto revision=revision_;const size_t index=size_t(std::clamp(selected_,0,int(project_.system.surfaces.size()-1)));
+    ShapeEditor dialog(project_,index,this);if(dialog.exec()!=QDialog::Accepted)return;
+    try {if(revision!=revision_)throw std::invalid_argument("Проект изменился; откройте редактор заново");checkpoint();project_.system.surfaces[index]=dialog.surface();changed();recalculate();}catch(const std::exception& e){error(e);}
+}
 void Window::coordinates() {
     if(project_.mode)return;
     const auto revision=revision_;
@@ -2313,7 +2323,7 @@ void Window::parameters() {
     type->addItems({"Диаметр входного зрачка, мм", "Диафрагменное число f/#",
                     "NA объекта в воздухе (конечное сопряжение)",
                     "NA изображения в выходной среде"});
-    if(hasCoordinates(s)){type->setItemText(0,"Диаметр физического STOP, мм");type->setEnabled(false);}
+    if(usesPhysicalStop(s)){type->setItemText(0,"Диаметр физического STOP, мм");type->setEnabled(false);}
     form->addRow("Апертура", type);
     auto* aperture = spin(s.pupilDiameter, .0001, 100000);
     form->addRow("Значение", aperture);
@@ -3033,6 +3043,9 @@ void Window::writeExamples(const QString& directory) {
     saveProject(directory+"/folded_mirror.optcad",foldedMirrorProject());
     saveProject(directory+"/coordinate_group.optcad",coordinateGroupProject());
     saveProject(directory+"/afocal_telescope.optcad",afocalTelescopeProject());
+    saveProject(directory+"/cylindrical_lens.optcad",cylindricalLensProject());
+    saveProject(directory+"/toroidal_lens.optcad",toroidalLensProject());
+    saveProject(directory+"/obscured_aperture.optcad",obscuredApertureProject());
 }
 static void reportDialog(QWidget* parent, QString title, QString text) {
     QDialog dialog(parent);

@@ -22,7 +22,7 @@ static void applySolvesImpl(SequentialSystem& s, const Catalog* catalog) {
     const size_t n = s.surfaces.size();
     if (n == 0 || n > 500 || s.solves.size() > 2 * n)
         throw std::invalid_argument("Некорректное число поверхностей или связей параметров");
-    if(hasCoordinates(s))for(const auto& rule:s.solves)if(rule.kind!=SolveKind::Pickup && rule.kind!=SolveKind::CurvaturePickup)throw std::invalid_argument("В локальных системах пока поддержаны только связи значения и кривизны");
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))for(const auto& rule:s.solves)if(rule.kind!=SolveKind::Pickup && rule.kind!=SolveKind::CurvaturePickup)throw std::invalid_argument("В локальных системах пока поддержаны только связи значения и кривизны");
     auto candidate = s;
     std::vector<const ParameterSolve*> rules(2 * n, nullptr);
     auto node = [](size_t surface, SolveParameter parameter) {
