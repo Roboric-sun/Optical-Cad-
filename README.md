@@ -19,7 +19,7 @@
 - Повторный выпуск можно запустить через Actions → Build and validate → Run workflow → `main`.
 
 
-В этой ветке готовится 1.3.1; кнопки выше ведут на опубликованный выпуск. Пакеты текущей ветки доступны из её проверки CI.
+В этой ветке подготовлена 1.3.1; кнопки выше ведут на опубликованный выпуск. Пакеты текущей ветки доступны из её проверки CI.
 
 [![Build and validate](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml/badge.svg?branch=codex%2Fsurfaces-apertures-1-3-1)](https://github.com/Roboric-sun/Optical-Cad-/actions/workflows/build.yml)
 
@@ -40,6 +40,8 @@ open release/v1.3.1-macOS/optical_cad.app
 В **Профиль и апертура…** добавлены цилиндрические X/Y и тороидальные поверхности, эллиптическая/прямоугольная апертура и круглый центральный экран. Собственное ядро рассчитывает нормали, реальные пересечения и виньетирование; доступны геометрические анализы и первый порядок 4×4. Три новых примера, формат 10, сохранение/undo и Python. [Инструкция и пределы](docs/SURFACES_1_3_1_RU.md).
 
 Это продолжение 1.3.x: новые волновые анализы и свободные формы ещё не объявлены готовыми. Ветка — `codex/surfaces-apertures-1-3-1`.
+
+Пройдены **1945 физических и GUI/файловых проверок**, отдельно Python и ASan/UBSan. [CI 1.3.1](https://github.com/Roboric-sun/Optical-Cad-/actions/runs/40863773657) проверил Windows, macOS, Linux core, автономные пакеты и Windows-установщик. Пробный [установщик Windows 1.3.1](https://github.com/Roboric-sun/Optical-Cad-/actions/runs/40863773657/artifacts/12892198863) доступен как `download-Windows` (для загрузки артефактов нужен вход в GitHub). [Изменения в PR #2](https://github.com/Roboric-sun/Optical-Cad-/pull/2).
 
 ## Версия 1.3 — локальные координаты и сложенный ход
 
