@@ -1,3 +1,7 @@
+# Дополнение 1.5
+
+Методы `analyze_configurations()`, `optimize_configurations()`, `tolerances()` и `tolerance_sample(sample, state=0)` вызывают то же C++ ядро, что интерфейс. Совместный поиск меняет проект; Monte Carlo возвращает отчёт, а sample создаёт новый Project. Все индексы API начинаются с 0. Для больших выборок увеличьте timeout. [Полные определения, форматы и пример](STUDIES_1_5_RU.md).
+
 # Python и пакетные расчёты
 
 Нужен Python 3.9+ без сторонних пакетов. В полном пакете есть `scripts/opticalcad.py` и `optics_batch` (в `.app/Contents/MacOS` на macOS, `bin` на Windows). В сборке из исходников SDK сам находит `build/optics_batch`. Для другого расположения задайте `OPTICALCAD_BATCH` или передайте `executable=`.
@@ -44,3 +48,7 @@ p.export_geopter("result.json")
 ## Координаты 1.3
 
 `first_order(step=1e-5)` возвращает дифференциальную матрицу 4×4 до локального изображения и `afocal`. Для CB `analyze()` возвращает геометрию, `image_origin_world_mm`, `spot_coordinates` и явные ошибки неприменимых анализов. `trace_rays` добавляет мировые точки и локальное изображение. [Определения, формат 9, примеры и ограничения](COORDINATES_1_3_RU.md).
+
+## Профили и апертуры 1.3.1
+
+Формат 10 добавляет объект `shape` к поверхностям: `profile` 0/1/2/3 (standard/cylinder X/cylinder Y/toroid), `rotationRadius`, `aperture` 0/1/2 (circle/ellipse/rectangle), `halfX`, `halfY`, `obscuration`. Анализ и первый порядок используют то же ядро, что GUI. [Определения, примеры и ограничения](SURFACES_1_3_1_RU.md).

@@ -143,6 +143,8 @@ FieldEditor::FieldEditor(const Project& project, QWidget* parent) : QDialog(pare
             if (candidate.optimization)
                 for (auto& operand : candidate.optimization->operands)
                     if (operand.field >= 0) operand.field = int(mapped(size_t(operand.field)));
+            for(auto& state:candidate.configurations)for(auto& v:state.values)if(fieldTarget(v.target))v.target.index=mapped(v.target.index);
+            auto configurationErrors=validateConfigurations({candidate.system,candidate.catalog},candidate.configurations);if(!configurationErrors.empty())throw std::invalid_argument(configurationErrors.front());
             applySolves(candidate.system, candidate.catalog);
             auto errors = candidate.system.validate(candidate.catalog);
             if (errors.empty() && candidate.optimization) errors = candidate.optimization->validate(candidate.system);
