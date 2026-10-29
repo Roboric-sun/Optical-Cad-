@@ -8,6 +8,7 @@ public:
  optics::Surface surface()const;
 private:
  Project project_;size_t index_;
+ std::array<QDoubleSpinBox*,7> xy_;
  QComboBox *profile_,*aperture_;
  QDoubleSpinBox *radius_,*rotation_,*semi_,*x_,*y_,*obscuration_;
 };

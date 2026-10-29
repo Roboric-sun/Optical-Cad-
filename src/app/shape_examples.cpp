@@ -17,3 +17,5 @@ Project obscuredApertureProject(){
  p.system.surfaces[0].semiDiameter=5;p.system.surfaces[0].aperture.obscuration=.7;
  p.workspace["sequentialViews"]=QJsonArray{0,1};return p;
 }
+
+Project freeformProject(){Project p;p.system.name="XY свободная форма · квадратично-кубический sag";p.system.fields={{0,0,1}};p.system.pupilDiameter=2;p.system.surfaces.resize(1);auto& a=p.system.surfaces[0];a.profile=optics::SurfaceProfile::XYPolynomial;a.radius=0;a.conic=0;a.material="N-BK7";a.thickness=60;a.semiDiameter=4;a.xySag={.01,.001,.012,.00015,-.0001,.0001,-.00015};p.system.pupilGrid=9;return p;}

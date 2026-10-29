@@ -113,6 +113,7 @@ class Window : public QMainWindow {
     void autofocus(bool allFields = false);
     void coordinates();
     void surfaceShape();
+    void designStudies(bool tolerances=false);
     void firstOrderReport();
     void optimize(bool configured = false);
     void optimizationSettings();

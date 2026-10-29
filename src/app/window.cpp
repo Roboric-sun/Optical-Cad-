@@ -2,6 +2,7 @@
 #include "coordinate_editor.hpp"
 #include "number_input.hpp"
 #include "window.hpp"
+#include "study_editor.hpp"
 #include "learning_help.hpp"
 #include "office.hpp"
 #include "optimization_editor.hpp"
@@ -153,6 +154,8 @@ Window::Window(QWidget* parent)
     auto* analysisMenu = new QMenu("Анализ", this);
     action(analysisMenu, "Одиночный луч…", {}, [this] { rayReport(); });
     action(analysisMenu,"Первый порядок 4×4…",{},[this]{firstOrderReport();})->setObjectName("firstOrderAction");
+    action(edit,"Конфигурации системы…",{},[this]{designStudies();})->setObjectName("configurationsAction");
+    action(edit,"Допуски и Monte Carlo…",{},[this]{designStudies(true);})->setObjectName("tolerancesAction");
     action(edit,"Профиль и апертура поверхности…",{},[this]{surfaceShape();})->setObjectName("shapeAction");
     action(edit,"Локальные системы координат…",{},[this]{coordinates();})->setObjectName("coordinateAction");
     action(analysisMenu, "Параксиальная трассировка", {}, [this] { paraxialReport(); });
@@ -243,7 +246,7 @@ Window::Window(QWidget* parent)
          {"Последовательный режим", "Непоследовательный режим", "Анализ", "Оптимизация", "Допуски",
           "Библиотеки", "Макросы", "Визуализация", "Управление требованиями"})
         modes_->addTab(name);
-    for (int i : {4, 6, 8}) {
+    for (int i : {6, 8}) {
         modes_->setTabEnabled(i, false);
         modes_->setTabToolTip(i, "Этот раздел ещё не реализован");
     }
@@ -991,6 +994,8 @@ void Window::buildRibbon() {
         b = g->small(col, "optimize", "Оптимизация по настройкам",
                      [this] { optimize(true); }, "customOptimizeButton");
         b->setEnabled(!project_.mode);
+        auto* stateColumn=g->column();
+        b=g->small(stateColumn,"settings","Конфигурации и общий поиск",[this]{designStudies();},"configurationsButton");b->setEnabled(!project_.mode);
         auto* focusColumn=g->column();
         b=g->small(focusColumn,"focus","Фокус: все поля и волны",[this]{autofocus(true);},"allFieldsFocusButton");
         b->setEnabled(!project_.mode);
@@ -1000,6 +1005,7 @@ void Window::buildRibbon() {
         row->addStretch();
         return;
     }
+    if(tab==4){auto* g=group("Производственные допуски");auto* b=g->large("rms","Допуски и\nкомпенсаторы",[this]{designStudies(true);},"tolerancesButton");b->setEnabled(!project_.mode);auto* col=g->column();b=g->small(col,"settings","Конфигурации системы",[this]{designStudies();},"toleranceConfigurationsButton");b->setEnabled(!project_.mode);row->addStretch();return;}
     if (tab == 5) {
         auto* g = group("Оптические материалы");
         g->large("catalog", "Каталог\nстёкол", [this] { catalog(); });
@@ -2121,7 +2127,7 @@ bool Window::addSurface() {
     std::vector<size_t> map(count + 1);
     for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 1;
     if (at <= candidate.system.stop) ++candidate.system.stop;
-    try { reindexSolves(candidate.system, map, candidate.catalog); }
+    try { reindexStudies(candidate,map); reindexSolves(candidate.system, map, candidate.catalog); }
     catch (const std::exception& e) { error(e); return false; }
     checkpoint();
     project_ = std::move(candidate);
@@ -2147,7 +2153,7 @@ void Window::addLens() {
     std::vector<size_t> map(count + 1);
     for (size_t i = 0; i <= count; ++i) map[i] = i < at ? i : i + 2;
     if (at <= candidate.system.stop) candidate.system.stop += 2;
-    try { reindexSolves(candidate.system, map, candidate.catalog); }
+    try { reindexStudies(candidate,map); reindexSolves(candidate.system, map, candidate.catalog); }
     catch (const std::exception& e) { error(e); return; }
     checkpoint();
     project_ = std::move(candidate);
@@ -2181,7 +2187,7 @@ void Window::moveSurface(int step) {
         s.stop = to;
     else if (s.stop == size_t(to))
         s.stop = selected_;
-    try { reindexSolves(s, map, candidate.catalog); }
+    try { reindexStudies(candidate,map); reindexSolves(s, map, candidate.catalog); }
     catch (const std::exception& e) { error(e); return; }
     checkpoint();
     project_ = std::move(candidate);
@@ -2203,7 +2209,7 @@ void Window::removeRow() {
         if (s.stop > size_t(selected_))
             --s.stop;
         s.stop = std::min(s.stop, s.surfaces.size() - 1);
-        try { reindexSolves(s, map, candidate.catalog); }
+        try { reindexStudies(candidate,map); reindexSolves(s, map, candidate.catalog); }
         catch (const std::exception& e) { error(e); return; }
         checkpoint();
         project_ = std::move(candidate);
@@ -2283,6 +2289,12 @@ void Window::coordinates() {
         if(revision!=revision_)throw std::invalid_argument("Проект изменился; откройте редактор координат заново");
         auto candidate=dialog.system();checkpoint();project_.system=std::move(candidate);changed();recalculate();
     }catch(const std::exception& e){error(e);}
+}
+void Window::designStudies(bool tolerances) {
+    if(project_.mode||optimizationBusy_||sceneBusy_)return;
+    const auto revision=revision_;StudyEditor editor(project_,tolerances,this);
+    if(editor.exec()!=QDialog::Accepted)return;
+    try{if(revision!=revision_)throw std::invalid_argument("Проект изменился; откройте редактор конфигураций заново");checkpoint();project_=editor.project();changed();recalculate();}catch(const std::exception& e){error(e);}
 }
 void Window::firstOrderReport() {
     try {
@@ -2955,6 +2967,8 @@ void Window::closeEvent(QCloseEvent* e) {
 }
 void Window::writeExamples(const QString& directory) {
     QDir().mkpath(directory);
+    saveProject(QDir(directory).filePath("conjugates_tolerances.optcad"),conjugatesProject());
+    saveProject(QDir(directory).filePath("xy_freeform.optcad"),freeformProject());
     Project p;
     optics::autofocus(p.system, p.catalog);
     saveProject(directory + "/singlet.optcad", p);

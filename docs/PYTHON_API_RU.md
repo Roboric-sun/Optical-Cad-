@@ -1,3 +1,7 @@
+# Дополнение 1.5
+
+Методы `analyze_configurations()`, `optimize_configurations()`, `tolerances()` и `tolerance_sample(sample, state=0)` вызывают то же C++ ядро, что интерфейс. Совместный поиск меняет проект; Monte Carlo возвращает отчёт, а sample создаёт новый Project. Все индексы API начинаются с 0. Для больших выборок увеличьте timeout. [Полные определения, форматы и пример](STUDIES_1_5_RU.md).
+
 # Python и пакетные расчёты
 
 Нужен Python 3.9+ без сторонних пакетов. В полном пакете есть `scripts/opticalcad.py` и `optics_batch` (в `.app/Contents/MacOS` на macOS, `bin` на Windows). В сборке из исходников SDK сам находит `build/optics_batch`. Для другого расположения задайте `OPTICALCAD_BATCH` или передайте `executable=`.

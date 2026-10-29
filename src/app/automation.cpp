@@ -21,8 +21,10 @@ QJsonObject executeRequest(const QJsonObject& request) {
     }
     if(!request["project"].isObject()) throw std::invalid_argument("Request requires a project object");
     auto project=deserializeProject(QJsonDocument(request["project"].toObject()).toJson());
-    auto& s=project.system;auto& c=project.catalog;
     const auto options=request["options"].toObject();
+    if(auto study=executeStudyRequest(project,operation,options))return *study;
+    if(options.contains("configuration")){const auto v=options["configuration"];if(!v.isDouble()||v.toDouble()<0||std::floor(v.toDouble())!=v.toDouble()||v.toDouble()>=project.configurations.size())throw std::invalid_argument("Invalid configuration index");project=configurationProject(project,size_t(v.toDouble()));}
+    auto& s=project.system;auto& c=project.catalog;
     QJsonObject result;
     if(operation=="validate") result["valid"]=true;
     else if(operation=="autofocus") {

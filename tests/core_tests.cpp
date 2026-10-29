@@ -8,6 +8,7 @@ size_t optimizationChecks();
 size_t lmChecks();
 size_t coordinateChecks();
 size_t surfaceShapeChecks();
+size_t studyChecks();
 size_t solveChecks();
 size_t marginalChecks();
 size_t fieldChecks();
@@ -369,6 +370,7 @@ int main() {
         count += lmChecks();
         count += coordinateChecks();
         count += surfaceShapeChecks();
+        count += studyChecks();
         count += solveChecks();
         count += marginalChecks();
         count += fieldChecks();

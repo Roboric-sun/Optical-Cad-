@@ -24,6 +24,7 @@ static double conicSag(double r,double k,double h) {
 static bool polynomial(const Surface& s){for(double a:s.asphere)if(a!=0)return true;for(double a:s.oddAsphere)if(a!=0)return true;return false;}
 double shapedSag(const Surface& s,double x,double y) {
     if(polynomial(s))return std::numeric_limits<double>::quiet_NaN();
+    if(s.profile==SurfaceProfile::XYPolynomial){const auto& a=s.xySag;return a[0]*x*x+a[1]*x*y+a[2]*y*y+a[3]*x*x*x+a[4]*x*x*y+a[5]*x*y*y+a[6]*y*y*y;}
     if(s.profile==SurfaceProfile::CylinderX)return conicSag(s.radius,s.conic,x);
     if(s.profile==SurfaceProfile::CylinderY)return conicSag(s.radius,s.conic,y);
     if(s.profile!=SurfaceProfile::Toroidal || s.conic!=0)return std::numeric_limits<double>::quiet_NaN();
@@ -37,7 +38,8 @@ Vec3 shapedNormal(const Surface& s,double x,double y) {
     if(!std::isfinite(shapedSag(s,x,y)))throw std::invalid_argument("Точка вне действительной ветви профиля");
     auto derivative=[](double r,double k,double h){if(r==0)return 0.;const double a=1-(1+k)*(h/r)*(h/r);if(a<=0)throw std::invalid_argument("Сингулярная нормаль профиля");return h/(r*std::sqrt(a));};
     double dx=0,dy=0;
-    if(s.profile==SurfaceProfile::CylinderX)dx=derivative(s.radius,s.conic,x);
+    if(s.profile==SurfaceProfile::XYPolynomial){const auto& a=s.xySag;dx=2*a[0]*x+a[1]*y+3*a[3]*x*x+2*a[4]*x*y+a[5]*y*y;dy=a[1]*x+2*a[2]*y+a[4]*x*x+2*a[5]*x*y+3*a[6]*y*y;}
+    else if(s.profile==SurfaceProfile::CylinderX)dx=derivative(s.radius,s.conic,x);
     else if(s.profile==SurfaceProfile::CylinderY)dy=derivative(s.radius,s.conic,y);
     else {
         const double zy=conicSag(s.radius,0,y),h=s.rotationRadius-zy;
@@ -97,6 +99,18 @@ std::optional<SurfaceHit> intersectToroidal(const Surface& s,const RigidFrame& p
         if(t < -1e-7 || !std::isfinite(z) || std::abs(point.z-z)>1e-7 || (aperture && !insideSurfaceAperture(s,point.x,point.y)))continue;
         return SurfaceHit{pose.world(point),pose.rotate(shapedNormal(s,point.x,point.y)),std::max(0.,t)};
     }
+    return {};
+}
+std::optional<SurfaceHit> intersectXYPolynomial(const Surface& s,const RigidFrame& pose,const Ray& ray,bool aperture){
+    const auto origin=pose.local(ray.origin),d=pose.inverseRotate(ray.direction);if(!finite(origin)||!finite(d)||d.norm2()<1e-20)return {};
+    const double offset=std::abs(d.z)>1e-10?-origin.z/d.z:-origin.dot(d)/d.norm2();const auto o=origin+d*offset;
+    const std::array<std::pair<int,int>,7> powers{{{2,0},{1,1},{0,2},{3,0},{2,1},{1,2},{0,3}}};Polynomial p{o.z,d.z,0,0};
+    for(size_t k=0;k<powers.size();++k){Polynomial term{1};auto multiply=[&](double a,double b){Polynomial next(term.size()+1);for(size_t i=0;i<term.size();++i){next[i]+=a*term[i];next[i+1]+=b*term[i];}term=next;};
+        for(int i=0;i<powers[k].first;++i)multiply(o.x,d.x);for(int i=0;i<powers[k].second;++i)multiply(o.y,d.y);for(size_t i=0;i<term.size();++i)p[i]-=s.xySag[k]*term[i];}
+    if(!std::all_of(p.begin(),p.end(),[](double a){return std::isfinite(a);}))return {};
+    for(double u:roots(p)){double t=offset+u;if(t<-1e-7||!std::isfinite(t))continue;const auto point=origin+d*t;
+        if(std::abs(point.z-shapedSag(s,point.x,point.y))>1e-7||(aperture&&!insideSurfaceAperture(s,point.x,point.y)))continue;
+        return SurfaceHit{pose.world(point),pose.rotate(shapedNormal(s,point.x,point.y)),std::max(0.,t)};}
     return {};
 }
 }

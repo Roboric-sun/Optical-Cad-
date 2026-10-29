@@ -85,8 +85,10 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
             s.transmission < 0 || s.transmission > 1 || !std::isfinite(s.reflectivity) ||
             s.reflectivity < 0 || s.reflectivity > 1)
             out.push_back("Некорректная геометрия поверхности " + std::to_string(i + 1));
-        if(int(s.profile)<0 || int(s.profile)>3 || !std::isfinite(s.rotationRadius) ||
+        if(int(s.profile)<0 || int(s.profile)>4 || !std::isfinite(s.rotationRadius) ||
            (s.profile!=SurfaceProfile::Toroidal && s.rotationRadius!=0))out.push_back("Некорректный профиль поверхности");
+        bool xy=false;for(double a:s.xySag){xy|=a!=0;if(!std::isfinite(a))out.push_back("Некорректный коэффициент XY");}
+        if((s.profile!=SurfaceProfile::XYPolynomial&&xy)||(s.profile==SurfaceProfile::XYPolynomial&&(s.radius!=0||s.conic!=0)))out.push_back("XY полином требует плоскую базу R=0, k=0; коэффициенты разрешены только у XY");
         if(s.profile!=SurfaceProfile::Standard) {
             bool poly=false;for(double a:s.asphere)poly|=a!=0;for(double a:s.oddAsphere)poly|=a!=0;
             if(poly || (s.profile==SurfaceProfile::Toroidal && s.conic!=0))out.push_back("Новый профиль не поддерживает эти асферические коэффициенты/конику");
@@ -169,6 +171,7 @@ Vec3 surfaceNormal(const Surface& s,double x,double y){return sagNormal(s,{x,y,0
 std::optional<SurfaceHit> intersectFramedSurface(const Surface& s, const RigidFrame& pose, const Ray& ray,
                                            bool aperture) {
     if(s.profile==SurfaceProfile::Toroidal)return intersectToroidal(s,pose,ray,aperture);
+    if(s.profile==SurfaceProfile::XYPolynomial)return intersectXYPolynomial(s,pose,ray,aperture);
     Vec3 o = pose.local(ray.origin), d = pose.inverseRotate(ray.direction);
     std::vector<double> roots;
     bool poly = false;

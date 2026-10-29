@@ -1,5 +1,5 @@
 #pragma once
-#include "optics/model.hpp"
+#include "optics/studies.hpp"
 #include <QByteArray>
 #include <QJsonObject>
 #include <QString>
@@ -11,6 +11,8 @@ struct Project {
     int mode = 0;
     QJsonObject workspace;
     std::optional<optics::OptimizationPlan> optimization;
+    std::vector<optics::Configuration> configurations;
+    std::optional<optics::TolerancePlan> tolerance;
 };
 QByteArray serializeProject(const Project&);
 Project deserializeProject(const QByteArray&, bool validate = true);
@@ -28,3 +30,12 @@ Project afocalTelescopeProject();
 Project cylindricalLensProject();
 Project toroidalLensProject();
 Project obscuredApertureProject();
+void writeStudies(QJsonObject&,const Project&);
+void readStudies(const QJsonObject&,Project&,bool validate);
+void reindexStudies(Project&,const std::vector<size_t>&);
+Project configurationProject(const Project&,size_t index);
+Project realizedProject(const Project&,const optics::ToleranceSample&,size_t configuration,bool compensated=true);
+QJsonObject toleranceReportJson(const optics::ToleranceReport&);
+Project conjugatesProject();
+
+Project freeformProject();

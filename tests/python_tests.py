@@ -74,3 +74,26 @@ with tempfile.TemporaryDirectory() as tmp:
         model.save(tmp/f"{name}.optcad")
         assert Project.load(tmp/f"{name}.optcad",executable=binary).data==model.data
 print("Python integration: new surface profiles and apertures, local coordinates, first order, DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")
+
+# Configurations, statistical tolerances, and independently saved manufactured optics.
+with tempfile.TemporaryDirectory() as location:
+    location=Path(location)
+    design=Project.load(root/"examples/conjugates_tolerances.optcad",executable=binary)
+    before=design.analyze_configurations()
+    assert len(before["states"])==3 and all(s["analysis"]["fields"][0]["survived"] for s in before["states"])
+    joint=design.optimize_configurations()
+    assert joint["after"]<=joint["before"] and joint["algorithm"]=="bounded coordinate"
+    design.data["tolerance"]["samples"]=8
+    design.data["tolerance"]["compensationIterations"]=4
+    report=design.tolerances()
+    assert report["after"]["total"]==8 and report["after"]["lower95"]<=report["after"]["fraction"]<=report["after"]["upper95"]
+    assert report==design.tolerances()
+    specimen=design.tolerance_sample(report["samples"][0],state=1)
+    specimen.save(location/"specimen.optcad")
+    assert Project.load(location/"specimen.optcad",executable=binary).data==specimen.data
+    assert "toleranceRealization" in specimen.data["workspace"] and "configurations" not in specimen.data
+    free=Project.load(root/"examples/xy_freeform.optcad",executable=binary)
+    assert free.analyze(pupil_grid=9)["fields"][0]["survived"] and len(free.first_order()["matrix"])==4
+    free.save(location/"free.optcad")
+    assert Project.load(location/"free.optcad",executable=binary).data==free.data
+print("Configuration, tolerance and XY freeform Python integration passed")

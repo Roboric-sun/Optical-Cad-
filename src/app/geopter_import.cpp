@@ -239,6 +239,7 @@ QByteArray exportGeopter(const Project& project, bool preserveNative) {
     const auto s = resolvedSystem(project.system, project.catalog);
     const auto errors = s.validate(project.catalog);
     if (!errors.empty()) throw std::invalid_argument(errors.front());
+    if(!project.configurations.empty()||project.tolerance||std::any_of(project.catalog.materials.begin(),project.catalog.materials.end(),[](const auto& m){return m.indexOffset!=0;}))throw std::invalid_argument("Export a standalone nominal state without tolerance metadata to Geopter");
     if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("Geopter export does not support coordinate breaks");
     if (s.fieldType == FieldType::RealImageHeight)
         throw std::invalid_argument("Geopter does not define real image-height fields");
