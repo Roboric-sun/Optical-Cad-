@@ -38,6 +38,7 @@ void writeFile(const QString& path,const QByteArray& bytes){QSaveFile f(path);if
 QString score(const std::optional<double>& v){return v?text(*v):"недопустимо";}
 }
 StudyEditor::StudyEditor(const Project& p,bool toleranceTab,QWidget* parent):QDialog(parent),project_(p){
+ setWindowModality(Qt::WindowModal);
  setObjectName("studyDialog");setWindowTitle("Конфигурации и допуски · 1.5");resize(1120,780);
  if(!project_.optimization){project_.optimization=defaultOptimization(project_.system,project_.catalog);project_.optimization->operands={{MeritKind::SpotRMS,-1,0,.01,1}};}
  auto* layout=new QVBoxLayout(this);auto* note=new QLabel("База хранит общую конструкцию. Состояния задают явные отличия. Функция качества и общие переменные берутся из редактора оптимизации; общий поиск использует ограниченный координатный метод.");note->setWordWrap(true);layout->addWidget(note);
