@@ -24,3 +24,7 @@ void reindexOptimization(Project&, size_t at, size_t removed, size_t inserted);
 Project foldedMirrorProject();
 Project coordinateGroupProject();
 Project afocalTelescopeProject();
+
+Project cylindricalLensProject();
+Project toroidalLensProject();
+Project obscuredApertureProject();

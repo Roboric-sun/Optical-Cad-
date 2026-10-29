@@ -66,6 +66,9 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
             !std::isfinite(v.upper) || !std::isfinite(v.step) || v.lower >= v.upper ||
             !std::isfinite(v.upper - v.lower) || v.step <= 0 || v.step > v.upper - v.lower)
             errors.push_back("Некорректная переменная или её границы");
+        if(!defocus && v.surface<s.surfaces.size() && s.surfaces[v.surface].profile!=SurfaceProfile::Standard &&
+           (asphericOrder(v.parameter)!=0 || (v.parameter==VariableParameter::Conic && s.surfaces[v.surface].profile==SurfaceProfile::Toroidal)))
+            errors.push_back("Этот параметр не поддерживается выбранным профилем");
         if (v.parameter == VariableParameter::Thickness && v.lower < 0)
             errors.push_back("Толщина не может быть отрицательной");
         if ((v.parameter == VariableParameter::Radius && isSolved(s, SolveParameter::Radius, v.surface)) ||
@@ -92,7 +95,7 @@ std::vector<std::string> OptimizationPlan::validate(const SequentialSystem& s) c
         if (o.kind == MeritKind::EdgeThickness &&
             (s.surfaces.size()<2 || o.surface >= s.surfaces.size()-1 || !std::isfinite(o.height) || o.height < 0))
             errors.push_back("Толщина края требует пару поверхностей и высоту ≥ 0");
-        if(hasCoordinates(s) && o.kind!=MeritKind::SpotRMS && o.kind!=MeritKind::CentroidX &&
+        if((hasCoordinates(s)||usesAdvancedSurfaces(s)) && o.kind!=MeritKind::SpotRMS && o.kind!=MeritKind::CentroidX &&
            o.kind!=MeritKind::CentroidY && o.kind!=MeritKind::Throughput)
             errors.push_back("В локальных системах доступны геометрическое пятно, центры и пропускание");
         weights += o.weight;
@@ -115,6 +118,7 @@ OptimizationPlan defaultOptimization(const SequentialSystem& s, const Catalog& c
     p.variables.push_back({VariableParameter::Defocus, 0, s.defocus - 10, s.defocus + 10, .5});
     p.operands.push_back({MeritKind::SpotRMS, -1, 0, .01, 1});
     try {
+        if(usesAdvancedSurfaces(s))throw std::invalid_argument("Геометрическая цель для новых профилей/масок");
         auto efl = paraxial(s, c, s.wavelengths.at(s.primary).um).efl;
         p.operands.push_back({MeritKind::EFL, -1, efl, std::max(1., std::abs(efl) * .01), 1});
     } catch (const std::exception&) {

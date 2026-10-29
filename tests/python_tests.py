@@ -67,4 +67,10 @@ with tempfile.TemporaryDirectory() as tmp:
         if name=="afocal_telescope":assert matrix["afocal"] and abs(matrix["matrix"][2][2]+2)<1e-5
         model.save(tmp / f"{name}.optcad")
         assert Project.load(tmp / f"{name}.optcad",executable=binary).data==model.data
-print("Python integration: local coordinates, first order, DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")
+    for name in ("cylindrical_lens","toroidal_lens","obscured_aperture"):
+        model=Project.load(root/f"examples/{name}.optcad",executable=binary)
+        assert model.data["version"]==10 and model.analyze(pupil_grid=9)["fields"][0]["survived"]>0
+        assert len(model.first_order()["matrix"])==4
+        model.save(tmp/f"{name}.optcad")
+        assert Project.load(tmp/f"{name}.optcad",executable=binary).data==model.data
+print("Python integration: new surface profiles and apertures, local coordinates, first order, DLS, common focus, load, edit, autofocus, reports, diffraction, scene, export/import and failures passed")

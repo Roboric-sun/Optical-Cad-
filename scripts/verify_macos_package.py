@@ -63,7 +63,7 @@ def verify(bundle: Path) -> None:
         sdk = bundle / "Contents/Resources/python/opticalcad.py"
         if not sdk.is_file():
             raise RuntimeError("Python SDK is missing from the application bundle")
-        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height", "real_image_height", "aspheric_singlet", "gullstrand_eye", "dls_focus", "folded_mirror", "coordinate_group", "afocal_telescope"):
+        for name in ("singlet", "achromat", "led_illuminator", "spectral_prism", "linked_singlet", "marginal_focus", "vignetted_singlet", "object_height", "image_height", "real_image_height", "aspheric_singlet", "gullstrand_eye", "dls_focus", "folded_mirror", "coordinate_group", "afocal_telescope", "cylindrical_lens", "toroidal_lens", "obscured_aperture"):
             project = json.loads((Path(output) / f"{name}.optcad").read_text())
             if project["format"] != "optical-cad" or not project["sequential"]["surfaces"]:
                 raise RuntimeError(f"Invalid generated example: {name}")
@@ -104,6 +104,8 @@ def verify(bundle: Path) -> None:
                 raise RuntimeError("Extended aspheric example is incomplete")
             if name in ("folded_mirror","coordinate_group") and (project["version"]!=9 or project["sequential"].get("pupilDefinition")!="physical-stop-diameter"):
                 raise RuntimeError("Coordinate example is incomplete")
+            if name in ("cylindrical_lens","toroidal_lens","obscured_aperture") and project["version"]!=10:
+                raise RuntimeError("Shape example must preserve format 10")
             if name == "dls_focus" and (
                 project["version"]!=8 or project["optimization"]["algorithm"]!=1
                 or project["optimization"]["starts"]!=3
@@ -131,7 +133,7 @@ def verify(bundle: Path) -> None:
                         "examples/image_height.optcad", "docs/FIELDS_RU.md", "scripts/opticalcad.py",
                         "docs/RELEASE_1_0_RU.md", "docs/PYTHON_API_RU.md",
                         "docs/GULLSTRAND_EYE_RU.md", "docs/TESTER_FEEDBACK_1_1_RU.md",
-                        "examples/gullstrand_eye.optcad", "examples/dls_focus.optcad", "docs/OPTIMIZATION_1_2_RU.md", "docs/COORDINATES_1_3_RU.md", "examples/folded_mirror.optcad",
+                        "examples/gullstrand_eye.optcad", "examples/dls_focus.optcad", "docs/OPTIMIZATION_1_2_RU.md", "docs/COORDINATES_1_3_RU.md", "docs/SURFACES_1_3_1_RU.md", "examples/toroidal_lens.optcad", "examples/folded_mirror.optcad",
                         "docs/benchmarks/geopter-1.0-matched.json",
                         "examples/real_image_height.optcad", "examples/aspheric_singlet.optcad",
                         "optical_cad.app/Contents/Resources/python/opticalcad.py",
@@ -139,7 +141,7 @@ def verify(bundle: Path) -> None:
             for relative in required:
                 if prefix + relative not in names:
                     raise RuntimeError(f"Missing companion file in {archive}: {relative}")
-    print(f"Package OK: {objects} Mach-O objects, local dependencies, sixteen generated examples, batch API and Python SDK.")
+    print(f"Package OK: {objects} Mach-O objects, local dependencies, nineteen generated examples, batch API and Python SDK.")
 
 
 if __name__ == "__main__":

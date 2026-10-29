@@ -34,6 +34,12 @@ struct CoordinateBreak {
     Vec3 shift, tilt;
     int reference=-1; // -1: global frame, otherwise an earlier nominal surface frame
 };
+enum class SurfaceProfile { Standard, CylinderX, CylinderY, Toroidal };
+enum class ApertureShape { Circle, Ellipse, Rectangle };
+struct SurfaceAperture {
+    ApertureShape shape=ApertureShape::Circle;
+    double halfX=1, halfY=1, obscuration=0; // outer mask inside semiDiameter, central circular blocker
+};
 struct Surface {
     std::string name = "Поверхность";
     SurfaceKind kind = SurfaceKind::Refract;
@@ -44,6 +50,9 @@ struct Surface {
     double transmission = 1, reflectivity = 1;
     Vec3 decenter, tilt;
     CoordinateBreak coordinates; // applied before this surface, inherited downstream
+    SurfaceProfile profile=SurfaceProfile::Standard;
+    double rotationRadius=0; // toroid X curvature at vertex, zero means flat X
+    SurfaceAperture aperture;
 };
 struct Field {
     double x = 0, y = 0, weight = 1;
@@ -91,6 +100,11 @@ struct SequentialSystem {
     static SequentialSystem demo();
 };
 bool hasCoordinates(const SequentialSystem&);
+bool hasAnamorphicSurfaces(const SequentialSystem&);
+bool hasAdvancedApertures(const SequentialSystem&);
+bool usesAdvancedSurfaces(const SequentialSystem&);
+bool usesPhysicalStop(const SequentialSystem&);
+bool insideSurfaceAperture(const Surface&,double x,double y);
 struct SequentialFrames {std::vector<RigidFrame> nominal, surfaces; RigidFrame image;};
 SequentialFrames sequentialFrames(const SequentialSystem&); // resolved scalar geometry
 SequentialFrames sequentialFrames(const SequentialSystem&, const Catalog&);
@@ -137,6 +151,10 @@ struct SurfaceHit {
     double distance = 0;
 };
 double sag(const Surface&, double x, double y);
+Vec3 surfaceNormal(const Surface&,double x,double y);
+double shapedSag(const Surface&,double x,double y);
+Vec3 shapedNormal(const Surface&,double x,double y);
+std::optional<SurfaceHit> intersectToroidal(const Surface&,const RigidFrame&,const Ray&,bool);
 std::optional<SurfaceHit> intersectFramedSurface(const Surface&, const RigidFrame&, const Ray&,bool aperture=true);
 std::optional<SurfaceHit> intersectSurface(const Surface&, const Pose&, const Ray&,
                                            bool aperture = true);
