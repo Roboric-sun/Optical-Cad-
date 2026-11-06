@@ -225,7 +225,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         return;
     }
     const auto& sys = physical;
-    if(hasCoordinates(sys) && view!=View::Layout && view!=View::Spot && view!=View::RMS && view!=View::GeometricMTF && view!=View::Scene && view!=View::Detector && view!=View::DetectorProfile) {
+    if((hasCoordinates(sys)||usesAdvancedSurfaces(sys)) && view!=View::Layout && view!=View::Spot && view!=View::RMS && view!=View::GeometricMTF && view!=View::Scene && view!=View::Detector && view!=View::DetectorProfile) {
         p.drawText(area,Qt::AlignCenter|Qt::TextWordWrap,"Этот анализ локальных систем ещё не аттестован. Доступны схема, пятно, RMS, геометрическая MTF и первый порядок 4×4.");return;
     }
     if (!d.error.isEmpty() && view != View::Layout) {
@@ -363,7 +363,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         };
     };
     targets.clear();
-    if(view==View::Layout && (hasCoordinates(sys) || layoutProjection!=0)) {
+    if(view==View::Layout && (hasCoordinates(sys) || usesAdvancedSurfaces(sys) || layoutProjection!=0)) {
         try {
             const auto frames=sequentialFrames(sys,cat);const auto clear=clearSemiDiameters(sys);
             auto xy=[&](Vec3 p){return layoutProjection==0 ? QPointF(p.z,p.y) : layoutProjection==1 ? QPointF(p.z,p.x) : QPointF(p.x,p.y);};
@@ -395,13 +395,36 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             for(size_t i=0;i<sys.surfaces.size();++i) {
                 targets.push_back(project(frames.surfaces[i].position));if(d.hidden.contains(int(i)))continue;
                 p.setPen(QPen(int(i)==d.selected?QColor("#ea9c36"):sys.surfaces[i].kind==SurfaceKind::Mirror?QColor("#555c72"):QColor("#3c7aaa"),int(i)==d.selected?3:2));
-                for(size_t j=0;j<2;++j){QPolygonF line;for(const auto& point:faces[2*i+j])line<<project(point);p.drawPolyline(line);}
+                for(size_t j=0;j<2;++j){
+                    QPolygonF line;QPainterPath active;bool open=false;
+                    for(const auto& point:faces[2*i+j]){line<<project(point);const auto q=frames.surfaces[i].local(point);
+                        if(insideSurfaceAperture(sys.surfaces[i],q.x,q.y)){if(!open)active.moveTo(project(point));else active.lineTo(project(point));open=true;}else open=false;}
+                    const auto pen=p.pen();p.setPen(QPen(QColor("#a5b4c5"),1,Qt::DashLine));p.drawPolyline(line);p.setPen(pen);p.drawPath(active);
+                }
+                const auto& surface=sys.surfaces[i];const auto& mask=surface.aperture;
+                if(mask.shape!=ApertureShape::Circle) {
+                    QPolygonF mechanical;
+                    for(int k=0;k<=100;++k){const double angle=2*pi*k/100,x=clear[i]*cos(angle),y=clear[i]*sin(angle),z=sag(surface,x,y);if(std::isfinite(z))mechanical<<project(frames.surfaces[i].world({x,y,z}));}
+                    p.setPen(QPen(QColor("#a5b4c5"),1,Qt::DashLine));p.drawPolyline(mechanical);
+                }
+                for(int border=0;border<(mask.obscuration>0?2:1);++border) {
+                    QPolygonF line;
+                    for(int k=0;k<=100;++k){const double angle=2*pi*k/100;double x=0,y=0;
+                        if(border){x=mask.obscuration*cos(angle);y=mask.obscuration*sin(angle);}
+                        else if(mask.shape==ApertureShape::Rectangle){const double t=4.*k/100;const int side=std::min(3,int(t));const double f=t-side;
+                            x=side==0?-mask.halfX+2*mask.halfX*f:side==1?mask.halfX:side==2?mask.halfX-2*mask.halfX*f:-mask.halfX;
+                            y=side==0?-mask.halfY:side==1?-mask.halfY+2*mask.halfY*f:side==2?mask.halfY:mask.halfY-2*mask.halfY*f;
+                        }else{x=(mask.shape==ApertureShape::Circle?clear[i]:mask.halfX)*cos(angle);y=(mask.shape==ApertureShape::Circle?clear[i]:mask.halfY)*sin(angle);}
+                        const double z=sag(surface,x,y);if(std::isfinite(z))line<<project(frames.surfaces[i].world({x,y,z}));
+                    }
+                    p.setPen(QPen(border?QColor("#202b3a"):QColor("#3c7aaa"),border?2:1));p.drawPolyline(line);
+                }
                 if(sys.surfaces[i].coordinates.mode!=CoordinateMode::None){p.setPen(QColor("#9467bd"));p.drawText(project(frames.nominal[i].position)+QPointF(5,-8),QString("CB %1").arg(i+1));}
             }
             for(const auto& [field,path]:rays){p.setPen(QPen(colors[field%5],1.1));QPolygonF line;for(const auto& point:path.points)line<<project(point);p.drawPolyline(line);}
             p.setPen(QPen(QColor("#68a448"),2));
             for(int j=0;j<2;++j)p.drawLine(project(frames.image.world(j?Vec3{-extent,0,0}:Vec3{0,-extent,0})),project(frames.image.world(j?Vec3{extent,0,0}:Vec3{0,extent,0})));
-            p.restore();p.setPen(QColor("#20364d"));p.drawText(QRectF(area.left()+8,area.top()+4,area.width()-16,36),"Глобальная проекция · CB — преобразование координат · зелёный — локальное изображение");
+            p.restore();p.setPen(QColor("#20364d"));p.drawText(QRectF(area.left()+8,area.top()+4,area.width()-16,36),usesAdvancedSurfaces(sys)?"Глобальная проекция · цвет — апертура · чёрный — экран · пунктир — механический контур":"Глобальная проекция · CB — преобразование координат · зелёный — локальное изображение");
         }catch(const std::exception& e){p.setPen(QColor("#9b392e"));p.drawText(area,Qt::AlignCenter|Qt::TextWordWrap,QString::fromUtf8(e.what()));}
         return;
     }

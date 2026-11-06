@@ -59,7 +59,7 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
         out.push_back("Некорректные поля или длины волн");
     if (pupilGrid < 3 || pupilGrid > 65)
         out.push_back("Сетка зрачка должна быть 3…65");
-    if(hasCoordinates(*this) && fieldType!=FieldType::Angle && fieldType!=FieldType::ObjectHeight)out.push_back("Локальные системы поддерживают углы и высоты объекта; высоты изображения ещё не поддержаны");
+    if(usesPhysicalStop(*this) && fieldType!=FieldType::Angle && fieldType!=FieldType::ObjectHeight)out.push_back("Локальные системы поддерживают углы и высоты объекта; высоты изображения ещё не поддержаны");
     for (auto f : fields) {
         if (!validField(*this, f)) out.push_back("Некорректное поле зрения / тип поля / расстояние объекта");
         else if (fieldType != FieldType::Angle) {
@@ -85,6 +85,29 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
             s.transmission < 0 || s.transmission > 1 || !std::isfinite(s.reflectivity) ||
             s.reflectivity < 0 || s.reflectivity > 1)
             out.push_back("Некорректная геометрия поверхности " + std::to_string(i + 1));
+        if(int(s.profile)<0 || int(s.profile)>4 || !std::isfinite(s.rotationRadius) ||
+           (s.profile!=SurfaceProfile::Toroidal && s.rotationRadius!=0))out.push_back("Некорректный профиль поверхности");
+        bool xy=false;for(double a:s.xySag){xy|=a!=0;if(!std::isfinite(a))out.push_back("Некорректный коэффициент XY");}
+        if((s.profile!=SurfaceProfile::XYPolynomial&&xy)||(s.profile==SurfaceProfile::XYPolynomial&&(s.radius!=0||s.conic!=0)))out.push_back("XY полином требует плоскую базу R=0, k=0; коэффициенты разрешены только у XY");
+        if(s.profile!=SurfaceProfile::Standard) {
+            bool poly=false;for(double a:s.asphere)poly|=a!=0;for(double a:s.oddAsphere)poly|=a!=0;
+            if(poly || (s.profile==SurfaceProfile::Toroidal && s.conic!=0))out.push_back("Новый профиль не поддерживает эти асферические коэффициенты/конику");
+            for(int k=0;k<64;++k){const double angle=2*pi*k/64;try{if(!std::isfinite(sag(s,s.semiDiameter*cos(angle),s.semiDiameter*sin(angle))))throw std::invalid_argument("domain");surfaceNormal(s,s.semiDiameter*cos(angle),s.semiDiameter*sin(angle));}catch(...){out.push_back("Механический полудиаметр выходит из действительной области профиля");break;}}
+        }
+        const auto& mask=s.aperture;
+        if(int(mask.shape)<0 || int(mask.shape)>2 || !std::isfinite(mask.halfX) || !std::isfinite(mask.halfY) ||
+           mask.halfX<=0 || mask.halfY<=0 || !std::isfinite(mask.obscuration) || mask.obscuration<0 || mask.obscuration>=s.semiDiameter)
+            out.push_back("Некорректная апертура или экранирование");
+        if(s.profile==SurfaceProfile::Standard && s.radius!=0 && 1+s.conic>0 &&
+           (mask.shape!=ApertureShape::Circle || mask.obscuration>0)) {
+            const double domain=std::abs(s.radius)/std::sqrt(1+s.conic);
+            const double extent=mask.shape==ApertureShape::Rectangle?std::hypot(mask.halfX,mask.halfY):std::max(mask.halfX,mask.halfY);
+            if(mask.obscuration>=std::min(domain,s.semiDiameter) || (mask.shape!=ApertureShape::Circle && extent>=domain))out.push_back("Маска выходит за реальную область поверхности или закрывает весь просвет");
+        }
+        if(mask.shape!=ApertureShape::Circle) {
+            const double extent=mask.shape==ApertureShape::Rectangle?std::hypot(mask.halfX,mask.halfY):std::max(mask.halfX,mask.halfY);
+            if(extent>s.semiDiameter+1e-12 || mask.obscuration>=std::min(mask.halfX,mask.halfY))out.push_back("Маска должна помещаться в механический круг и иметь открытый просвет");
+        }
         for (double a : s.asphere)
             if (!std::isfinite(a))
                 out.push_back("Некорректная асферика");
@@ -106,6 +129,7 @@ std::vector<std::string> SequentialSystem::validate(const Catalog& catalog) cons
     return out;
 }
 double sag(const Surface& s, double x, double y) {
+    if(s.profile!=SurfaceProfile::Standard)return shapedSag(s,x,y);
     double q = x * x + y * y, z = 0;
     if (s.radius != 0) {
         double rad = 1 - (1 + s.conic) * q / (s.radius * s.radius);
@@ -123,6 +147,7 @@ double sag(const Surface& s, double x, double y) {
     return z;
 }
 static Vec3 sagNormal(const Surface& s, Vec3 p) {
+    if(s.profile!=SurfaceProfile::Standard)return shapedNormal(s,p.x,p.y);
     double q = p.x * p.x + p.y * p.y, derivative = 0;
     if (s.radius != 0) {
         double rad = 1 - (1 + s.conic) * q / (s.radius * s.radius);
@@ -142,8 +167,11 @@ static Vec3 sagNormal(const Surface& s, Vec3 p) {
     }
     return Vec3{-derivative * p.x, -derivative * p.y, 1}.unit();
 }
+Vec3 surfaceNormal(const Surface& s,double x,double y){return sagNormal(s,{x,y,0});}
 std::optional<SurfaceHit> intersectFramedSurface(const Surface& s, const RigidFrame& pose, const Ray& ray,
                                            bool aperture) {
+    if(s.profile==SurfaceProfile::Toroidal)return intersectToroidal(s,pose,ray,aperture);
+    if(s.profile==SurfaceProfile::XYPolynomial)return intersectXYPolynomial(s,pose,ray,aperture);
     Vec3 o = pose.local(ray.origin), d = pose.inverseRotate(ray.direction);
     std::vector<double> roots;
     bool poly = false;
@@ -156,9 +184,10 @@ std::optional<SurfaceHit> intersectFramedSurface(const Surface& s, const RigidFr
                 return {};
             roots.push_back(-o.z / d.z);
         } else {
-            double k = 1 + s.conic, A = d.x * d.x + d.y * d.y + k * d.z * d.z,
-                   B = 2 * (o.x * d.x + o.y * d.y - s.radius * d.z + k * o.z * d.z),
-                   C = o.x * o.x + o.y * o.y - 2 * s.radius * o.z + k * o.z * o.z;
+            const double mx=s.profile==SurfaceProfile::CylinderY?0:1,my=s.profile==SurfaceProfile::CylinderX?0:1;
+            double k = 1 + s.conic, A = mx*d.x * d.x + my*d.y * d.y + k * d.z * d.z,
+                   B = 2 * (mx*o.x * d.x + my*o.y * d.y - s.radius * d.z + k * o.z * d.z),
+                   C = mx*o.x * o.x + my*o.y * o.y - 2 * s.radius * o.z + k * o.z * o.z;
             if (std::abs(A) < 1e-14) {
                 if (std::abs(B) > 1e-14)
                     roots.push_back(-C / B);
@@ -203,7 +232,7 @@ std::optional<SurfaceHit> intersectFramedSurface(const Surface& s, const RigidFr
         double zs = sag(s, p.x, p.y);
         if (!std::isfinite(zs) || std::abs(zs - p.z) > 1e-6)
             continue;
-        if (aperture && p.x * p.x + p.y * p.y > s.semiDiameter * s.semiDiameter + 1e-9)
+        if (aperture && !insideSurfaceAperture(s,p.x,p.y))
             continue;
         return SurfaceHit{pose.world(p), pose.rotate(sagNormal(s, p)), std::max(0.0, t)};
     }
@@ -236,7 +265,10 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
         for (size_t i = 0; i < sys.surfaces.size() && i <= through; ++i) {
             auto& s = sys.surfaces[i];
             const auto& p=frames.surfaces.at(i);
-            auto hit = intersectFramedSurface(s, p, ray, aperture);
+            const bool advanced=s.profile!=SurfaceProfile::Standard || s.aperture.shape!=ApertureShape::Circle || s.aperture.obscuration>0;
+            // A blocked first geometric contact cannot tunnel through an opaque
+            // mask and reappear at a later open root of the same surface.
+            auto hit = intersectFramedSurface(s, p, ray, advanced?false:aperture);
             if (!hit) {
                 out.failedSurface = i;
                 out.status =
@@ -246,7 +278,7 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
             out.opl += n * hit->distance;
             if (aperture) {
                 const auto local = p.local(hit->point);
-                if (std::hypot(local.x, local.y) > clear[i] + 1e-9) {
+                if (!insideSurfaceAperture(s,local.x,local.y) || std::hypot(local.x, local.y) > clear[i] + 1e-9) {
                     out.status = TraceStatus::Vignetted; out.failedSurface = i; return out;
                 }
             }
@@ -306,7 +338,7 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
     double start = s.objectDistance > 0 ? -s.objectDistance : -std::max(30.0, s.pupilDiameter * 2);
     Vec3 direction = Vec3{tan(f.x * deg), tan(f.y * deg), 1}.unit();
     double A = 1, B = 0, C = 0, D = 1, n = 1;
-    bool centered = !hasCoordinates(s);
+    bool centered = !usesPhysicalStop(s);
     for (size_t i = 0; centered && i < s.stop; ++i) {
         auto& a = s.surfaces[i];
         if (a.kind == SurfaceKind::Mirror || a.tilt.norm2() > 0 || a.decenter.norm2() > 0) {
@@ -411,7 +443,7 @@ double apertureDiameter(const SequentialSystem& sys, const Catalog& c, ApertureT
 }
 Paraxial paraxial(const SequentialSystem& s, const Catalog& cat, double w) {
     if (!s.solves.empty()) return paraxial(resolvedSystem(s, cat), cat, w);
-    if(hasCoordinates(s))throw std::invalid_argument("Для локальных систем используйте дифференциальный первый порядок");
+    if(usesPhysicalStop(s))throw std::invalid_argument("Для локальных/неосесимметричных систем используйте дифференциальный первый порядок");
     double A = 1, B = 0, C = 0, D = 1, n = 1;
     for (size_t i = 0; i < s.surfaces.size(); ++i) {
         auto& surf = s.surfaces[i];

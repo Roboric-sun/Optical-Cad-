@@ -15,6 +15,7 @@ struct Material {
     double minWavelength = 0.2, maxWavelength = 5;
     bool schottFormula = false;
     std::array<double, 6> schott{}; // n² = a0 + a1 λ² + a2 λ^-2 + ... + a5 λ^-8
+    double indexOffset=0; // wavelength independent manufacturing Δn, applied after dispersion
     double index(double wavelength_um) const;
 };
 class Catalog {
@@ -34,6 +35,12 @@ struct CoordinateBreak {
     Vec3 shift, tilt;
     int reference=-1; // -1: global frame, otherwise an earlier nominal surface frame
 };
+enum class SurfaceProfile { Standard, CylinderX, CylinderY, Toroidal, XYPolynomial };
+enum class ApertureShape { Circle, Ellipse, Rectangle };
+struct SurfaceAperture {
+    ApertureShape shape=ApertureShape::Circle;
+    double halfX=1, halfY=1, obscuration=0; // outer mask inside semiDiameter, central circular blocker
+};
 struct Surface {
     std::string name = "Поверхность";
     SurfaceKind kind = SurfaceKind::Refract;
@@ -44,6 +51,10 @@ struct Surface {
     double transmission = 1, reflectivity = 1;
     Vec3 decenter, tilt;
     CoordinateBreak coordinates; // applied before this surface, inherited downstream
+    SurfaceProfile profile=SurfaceProfile::Standard;
+    double rotationRadius=0; // toroid X curvature at vertex, zero means flat X
+    SurfaceAperture aperture;
+    std::array<double,7> xySag{}; // x², xy, y², x³, x²y, xy², y³; flat-base Cartesian sag
 };
 struct Field {
     double x = 0, y = 0, weight = 1;
@@ -91,6 +102,11 @@ struct SequentialSystem {
     static SequentialSystem demo();
 };
 bool hasCoordinates(const SequentialSystem&);
+bool hasAnamorphicSurfaces(const SequentialSystem&);
+bool hasAdvancedApertures(const SequentialSystem&);
+bool usesAdvancedSurfaces(const SequentialSystem&);
+bool usesPhysicalStop(const SequentialSystem&);
+bool insideSurfaceAperture(const Surface&,double x,double y);
 struct SequentialFrames {std::vector<RigidFrame> nominal, surfaces; RigidFrame image;};
 SequentialFrames sequentialFrames(const SequentialSystem&); // resolved scalar geometry
 SequentialFrames sequentialFrames(const SequentialSystem&, const Catalog&);
@@ -137,6 +153,11 @@ struct SurfaceHit {
     double distance = 0;
 };
 double sag(const Surface&, double x, double y);
+Vec3 surfaceNormal(const Surface&,double x,double y);
+double shapedSag(const Surface&,double x,double y);
+Vec3 shapedNormal(const Surface&,double x,double y);
+std::optional<SurfaceHit> intersectToroidal(const Surface&,const RigidFrame&,const Ray&,bool);
+std::optional<SurfaceHit> intersectXYPolynomial(const Surface&,const RigidFrame&,const Ray&,bool);
 std::optional<SurfaceHit> intersectFramedSurface(const Surface&, const RigidFrame&, const Ray&,bool aperture=true);
 std::optional<SurfaceHit> intersectSurface(const Surface&, const Pose&, const Ray&,
                                            bool aperture = true);

@@ -12,7 +12,7 @@ std::vector<double> clearSemiDiameters(const SequentialSystem& s) {
         }
         radius.push_back(r);
     }
-    if(hasCoordinates(s))return radius;
+    if(hasCoordinates(s)||usesAdvancedSurfaces(s))return radius;
     // Each edge clips both adjoining surfaces, so later edges cannot reopen
     // an outer annulus disconnected from the axial optical volume.
     for (size_t i = 0; i + 1 < s.surfaces.size(); ++i) {

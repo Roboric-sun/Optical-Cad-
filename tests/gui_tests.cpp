@@ -61,6 +61,8 @@ size_t releaseGUIChecks(Window&, const QString&);
 size_t testerFeedbackGUIChecks(Window&, const QString&);
 size_t lmGUIChecks(Window&, const QString&);
 size_t coordinateGUIChecks(Window&, const QString&);
+size_t surfaceShapeGUIChecks(Window&, const QString&);
+size_t studyGUIChecks(Window&,const QString&);
 int main(int argc, char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
@@ -377,6 +379,8 @@ int main(int argc, char** argv) {
         checks += int(testerFeedbackGUIChecks(w, dir));
         checks += int(lmGUIChecks(w, dir));
         checks += int(coordinateGUIChecks(w, dir));
+        checks += int(surfaceShapeGUIChecks(w, dir));
+        checks += int(studyGUIChecks(w, dir));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

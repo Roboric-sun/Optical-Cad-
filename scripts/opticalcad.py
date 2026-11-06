@@ -94,6 +94,19 @@ class Project:
     def optimize(self):
         return self._request("optimize")
 
+    def analyze_configurations(self):
+        return self._request("analyze_configurations")
+
+    def optimize_configurations(self):
+        return self._request("optimize_configurations")
+
+    def tolerances(self):
+        return self._request("tolerances")
+
+    def tolerance_sample(self, sample, *, state=0):
+        result = self._request("tolerance_sample", deltas=sample["deltas"], corrections=sample["corrections"], state=state)
+        return Project(result["sample_project"], executable=self.executable, timeout=self.timeout)
+
     def trace_scene(self):
         return self._request("trace_scene")
 

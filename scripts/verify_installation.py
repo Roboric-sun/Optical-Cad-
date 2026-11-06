@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             sys.path.insert(0, str(package / "scripts"))
             from opticalcad import Project
             examples = sorted((package / "examples").glob("*.optcad"))
-            if len(examples) != 16:
-                raise RuntimeError(f"Expected 16 examples, found {len(examples)}")
+            if len(examples) != 21:
+                raise RuntimeError(f"Expected 21 examples, found {len(examples)}")
             for path in examples:
                 project = Project.load(path, executable=batch)
                 if not project.validate():
@@ -108,6 +108,25 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
                 model.save(base/f"{name}.optcad")
                 if Project.load(base/f"{name}.optcad",executable=batch).data!=model.data:raise RuntimeError("Coordinate example did not reopen")
             result["batch_coordinates"]=True
+            for name in ("cylindrical_lens","toroidal_lens","obscured_aperture"):
+                model=Project.load(package/f"examples/{name}.optcad",executable=batch)
+                if not model.analyze(pupil_grid=9)["fields"][0]["survived"]:raise RuntimeError("Shape example has no surviving rays")
+                if len(model.first_order()["matrix"])!=4:raise RuntimeError("Shape first order unavailable")
+                model.save(base/f"{name}.optcad")
+                if Project.load(base/f"{name}.optcad",executable=batch).data!=model.data:raise RuntimeError("Format 10 did not reopen exactly")
+            result["batch_shapes"]=True
+            states=Project.load(package/"examples/conjugates_tolerances.optcad",executable=batch)
+            if len(states.analyze_configurations()["states"])!=3:raise RuntimeError("Configuration analyses unavailable")
+            states.data["tolerance"]["samples"]=4
+            states.data["tolerance"]["compensationIterations"]=4
+            tolerance=states.tolerances()
+            if tolerance["after"]["total"]!=4:raise RuntimeError("Monte Carlo sample count differs")
+            specimen=states.tolerance_sample(tolerance["samples"][0],state=1)
+            specimen.save(base/"manufactured.optcad")
+            if Project.load(base/"manufactured.optcad",executable=batch).data!=specimen.data:raise RuntimeError("Manufactured specimen did not reopen")
+            free=Project.load(package/"examples/xy_freeform.optcad",executable=batch)
+            if not free.analyze(pupil_grid=9)["fields"][0]["survived"]:raise RuntimeError("Freeform has no geometric rays")
+            result["batch_studies"]=True
         except subprocess.TimeoutExpired as error:
             def decoded(value):
                 return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
@@ -122,4 +141,4 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not result.get("ok"):
         raise RuntimeError(result)
-    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 16 examples, local coordinates, DLS and spectral diffraction")
+    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 21 examples, shapes/apertures, local coordinates, DLS and spectral diffraction")
