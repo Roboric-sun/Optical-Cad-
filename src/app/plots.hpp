@@ -3,6 +3,7 @@
 #include <QSet>
 #include <QWidget>
 #include <memory>
+#include <atomic>
 
 enum class View {
     Layout,
@@ -30,12 +31,13 @@ struct Results {
     std::array<optics::AnalysisCurve, 4> curves;
     std::optional<optics::SceneTrace> scene;
     std::vector<optics::DetectorStatistics> detectorStats;
-    QString error, waveError, diffractionError, fanError, geometryWarning;
+    QString summary, error, waveError, diffractionError, fanError, geometryWarning;
     int field = 0, selected = -1, detector = 0;
     QSet<int> hidden;
     size_t displayRays = 80;
     int layoutRays = 13;
 };
+std::shared_ptr<Results> sequentialAnalysis(Project, int, std::shared_ptr<std::atomic<bool>>);
 QString viewName(View);
 QByteArray rayFanCSV(const optics::RayFan&);
 QByteArray detectorProfileCSV(const optics::DetectorStatistics&);

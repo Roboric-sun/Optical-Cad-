@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "window.hpp"
 #include <QAbstractButton>
 #include <QAction>
@@ -62,6 +63,7 @@ size_t testerFeedbackGUIChecks(Window&, const QString&);
 size_t lmGUIChecks(Window&, const QString&);
 size_t coordinateGUIChecks(Window&, const QString&);
 size_t surfaceShapeGUIChecks(Window&, const QString&);
+size_t auditGUIChecks(Window&);
 size_t studyGUIChecks(Window&,const QString&);
 int main(int argc, char** argv) {
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
@@ -123,8 +125,8 @@ int main(int argc, char** argv) {
         Window w;
         w.show();
         QTest::qWait(150);
-        check(!w.results()->spots.empty(), "Live sequential analysis");
-        check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty(),
+        check(!readyResults(w)->spots.empty(), "Live sequential analysis");
+        check(readyResults(w)->error.isEmpty() && readyResults(w)->waveError.isEmpty(),
               "Demo analyses succeed");
         auto* rs = w.findChild<QScrollArea*>("ribbonScroll");
         check(rs && rs->horizontalScrollBarPolicy()==Qt::ScrollBarAsNeeded,
@@ -143,14 +145,14 @@ int main(int argc, char** argv) {
         search->clear();
         check(!tree->topLevelItem(0)->isHidden(), "Clearing navigator search restores model");
         auto* firstSurface = tree->topLevelItem(0)->child(1)->child(1);
-        const double initialRMS = w.results()->spots[0].rms;
+        const double initialRMS = readyResults(w)->spots[0].rms;
         QPoint eye(tree->header()->sectionViewportPosition(2) + tree->columnWidth(2) / 2,
                    tree->visualItemRect(firstSurface).center().y());
         QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, eye);
-        check(w.results()->hidden.contains(0) && w.results()->spots[0].rms == initialRMS,
+        check(readyResults(w)->hidden.contains(0) && readyResults(w)->spots[0].rms == initialRMS,
               "Eye control changes presentation without changing ray physics");
         QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, eye);
-        check(!w.results()->hidden.contains(0), "Eye control restores visible geometry");
+        check(!readyResults(w)->hidden.contains(0), "Eye control restores visible geometry");
         auto* table = w.findChild<QTableWidget*>("surfaceTable");
         check(table && table->rowCount() == 4, "Surface editor populated");
         double r = w.project().system.surfaces[0].radius;
@@ -231,8 +233,8 @@ int main(int argc, char** argv) {
             check(!pixmap.isNull(), "Analysis view renders");
             check(paintedData(pixmap), "Analysis draws calculated data beyond its toolbar");
             if (id == 2) {
-                auto& fan = w.results()->fan;
-                check(w.results()->fanError.isEmpty() && fan.tangential.y.size() == 3 &&
+                auto& fan = readyResults(w)->fan;
+                check(readyResults(w)->fanError.isEmpty() && fan.tangential.y.size() == 3 &&
                           fan.sagittal.y.size() == 3,
                       "Live ray-fan view receives both physical pupil sections");
                 auto csvPath = temp.path() + "/ray_fans.csv";
@@ -274,9 +276,9 @@ int main(int argc, char** argv) {
         while (w.calculating() && time.elapsed() < 15000)
             QTest::qWait(25);
         QApplication::processEvents();
-        check(!w.calculating() && w.results()->scene.has_value(),
+        check(!w.calculating() && readyResults(w)->scene.has_value(),
               "Async nonsequential trace completes");
-        check(w.results()->scene->detectedPower > 0, "Detector records physical power");
+        check(readyResults(w)->scene->detectedPower > 0, "Detector records physical power");
         auto* tabs = w.findChild<QTabWidget*>("analysisTabs");
         auto* scenePlot = dynamic_cast<PlotWidget*>(tabs->currentWidget());
         check(scenePlot && scenePlot->view == View::Scene,
@@ -289,7 +291,7 @@ int main(int argc, char** argv) {
         scenePlot->resetView();
         auto* display = w.findChild<QSpinBox*>("displayRayCount");
         display->setValue(12);
-        check(w.results()->displayRays == 12 && w.results()->scene->launched == 10000,
+        check(readyResults(w)->displayRays == 12 && readyResults(w)->scene->launched == 10000,
               "Display ray count is independent of statistical ray count");
         display->setValue(80);
         click(w, "objectEditorButton");
@@ -320,7 +322,7 @@ int main(int argc, char** argv) {
         }
         w.findChild<QTableWidget*>("objectTable")->item(0, 6)->setText("30");
         QTest::qWait(250);
-        check(!w.results()->scene.has_value(), "Editing invalidates stale detector map");
+        check(!readyResults(w)->scene.has_value(), "Editing invalidates stale detector map");
         click(w, "object_6");
         check(w.project().scene.objects.back().kind == optics::ObjectKind::Prism,
               "Previously disabled prism ribbon command creates a real dielectric object");
@@ -344,8 +346,8 @@ int main(int argc, char** argv) {
         time.restart();
         while (w.calculating() && time.elapsed() < 15000)
             QTest::qWait(25);
-        check(!w.calculating() && w.results()->scene && w.results()->error.isEmpty() &&
-                  w.results()->scene->launched == 30000 && w.results()->scene->detectedPower > .8,
+        check(!w.calculating() && readyResults(w)->scene && readyResults(w)->error.isEmpty() &&
+                  readyResults(w)->scene->launched == 30000 && readyResults(w)->scene->detectedPower > .8,
               "Three-line prism example traces from the GUI and reaches its detector");
         auto* prismPlot =
             dynamic_cast<PlotWidget*>(w.findChild<QTabWidget*>("analysisTabs")->currentWidget());
@@ -381,6 +383,7 @@ int main(int argc, char** argv) {
         checks += int(coordinateGUIChecks(w, dir));
         checks += int(surfaceShapeGUIChecks(w, dir));
         checks += int(studyGUIChecks(w, dir));
+        checks += int(auditGUIChecks(w));
         w.hide();
         std::cout << checks << " GUI and persistence checks passed\n";
         return 0;

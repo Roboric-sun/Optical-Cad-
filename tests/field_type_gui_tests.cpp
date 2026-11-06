@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "field_editor.hpp"
 #include "window.hpp"
 #include <QAction>
@@ -114,13 +115,13 @@ size_t fieldTypeGUIChecks(Window& w, const QString& dir) {
     w.findChild<QToolButton*>("fieldsButton")->click(); QTest::qWait(150);
     check(w.project().system.fieldType==FieldType::ObjectHeight,"Ribbon editor applies field type to actual window");
     check(w.findChild<QComboBox*>("fieldCombo")->itemText(1).contains("мм"),"Analysis field selector displays millimetres");
-    check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty(),"Actual geometry and wave recalculation succeeds");
+    check(readyResults(w)->error.isEmpty() && readyResults(w)->waveError.isEmpty(),"Actual geometry and wave recalculation succeeds");
     w.findChild<QAction*>("undoAction")->trigger();
     check(w.project().system.fieldType==FieldType::Angle && w.project().system.objectDistance==0,"Undo restores angular fields and previous conjugate");
     w.findChild<QAction*>("redoAction")->trigger();
     check(w.project().system.fieldType==FieldType::ObjectHeight && w.project().system.objectDistance==200,"Redo restores field type and conjugate");
     w.setProject(image.project()); w.recalculate(); QTest::qWait(180);
-    check(w.results()->error.isEmpty() && w.results()->fanError.isEmpty() && w.results()->diffraction.psf.size()==4096,"Image-height GUI computes spot, ray fan and FFT");
+    check(readyResults(w)->error.isEmpty() && readyResults(w)->fanError.isEmpty() && readyResults(w)->diffraction.psf.size()==4096,"Image-height GUI computes spot, ray fan and FFT");
     bool parametersOpened=false;
     QTimer::singleShot(0,&w,[&]{
         auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget()); if(!dialog) return;
@@ -131,6 +132,7 @@ size_t fieldTypeGUIChecks(Window& w, const QString& dir) {
     w.findChild<QToolButton*>("parametersButton")->click();
     check(parametersOpened && w.project().system.fieldType==FieldType::ParaxialImageHeight,"General parameters dialog also preserves image-height definition");
     if(!dir.isEmpty()) w.grab().save(dir+"/image_height_project.png");
+    readyResults(w);
     // Exercise actual CSV save dialog and units rather than a copied formatter.
     auto* rms=w.findChild<QToolButton*>("analysis_"+QString::number(int(View::RMS)));
     check(rms!=nullptr,"RMS command is available for height fields"); rms->click();

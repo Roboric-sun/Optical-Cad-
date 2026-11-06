@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "window.hpp"
 #include "coordinate_editor.hpp"
 #include "automation.hpp"
@@ -52,7 +53,7 @@ size_t coordinateGUIChecks(Window& w,const QString& dir) {
     for(const auto& project:{folded,coordinateGroupProject(),afocalTelescopeProject()}) {
         check(project.system.validate(project.catalog).empty(),"New physical example validates");
         w.setProject(project);w.recalculate();
-        check(w.results()->error.isEmpty()&&!w.results()->spots.empty()&&!w.results()->spots[0].samples.empty(),"Folded, off-axis and afocal examples retain geometric analyses");
+        check(readyResults(w)->error.isEmpty()&&!readyResults(w)->spots.empty()&&!readyResults(w)->spots[0].samples.empty(),"Folded, off-axis and afocal examples retain geometric analyses");
         const auto first=differentialFirstOrder(project.system,project.catalog,project.system.wavelengths[project.system.primary].um);
         if(project.system.name.find("Афокальный")!=std::string::npos) {
             check(first.afocal,"Thick-lens afocal telescope is classified correctly");
@@ -66,10 +67,10 @@ size_t coordinateGUIChecks(Window& w,const QString& dir) {
         check(!analysis["fields"].toArray().isEmpty(),"Batch analyze returns geometry even when scalar paraxial EFL is unavailable");
         const auto api=executeRequest({{"operation","first_order"},{"project",request}});
         near(api["matrix"].toArray()[2].toArray()[2].toDouble(),first.matrix[10],1e-10,"Batch first order agrees with core and GUI");
-        PlotWidget layout(View::Layout);layout.resize(1000,600);layout.setData(w.results());layout.show();
+        PlotWidget layout(View::Layout);layout.resize(1000,600);layout.setData(readyResults(w));layout.show();
         for(int projection=0;projection<3;++projection){layout.layoutProjection=projection;layout.update();QTest::qWait(20);const auto pixmap=layout.grab();check(!layout.axisViews().empty(),"All global layout projections produce real axes");if(!dir.isEmpty())pixmap.save(dir+QString("/coordinate_%1_%2.png").arg(int(project.system.surfaces.size())).arg(projection));}
     }
-    w.setProject(folded);w.recalculate();check(!w.results()->waveError.isEmpty()&&!w.results()->diffractionError.isEmpty(),"Unvalidated folded wave/diffraction views have explicit diagnostics");
+    w.setProject(folded);w.recalculate();check(!readyResults(w)->waveError.isEmpty()&&!readyResults(w)->diffractionError.isEmpty(),"Unvalidated folded wave/diffraction views have explicit diagnostics");
     PlotWidget* activeLayout=nullptr;for(auto* plot:w.findChildren<PlotWidget*>())if(plot->view==View::Layout)activeLayout=plot;
     check(activeLayout!=nullptr,"Main window provides a real layout view");
     auto* tabs=qobject_cast<QTabWidget*>(activeLayout->parentWidget()->parentWidget());check(tabs!=nullptr,"Layout belongs to analysis tabs");tabs->setCurrentWidget(activeLayout);

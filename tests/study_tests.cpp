@@ -19,6 +19,9 @@ size_t studyChecks(){
  driver.values[0].target.index=1;rejects([&]{configurationDesign(linked,driver);},"Configuration refuses override of dependent radius");
  std::vector<Configuration> states{a,b};auto cancelBase=base;auto cancelStates=states;size_t calls=0;
  auto cancelled=optimizeConfigurations(cancelBase,cancelStates,quality,[&](size_t,size_t,double){return ++calls<4;});check(cancelled.cancelled,"Joint optimization cancellation is reported");near(cancelBase.system.defocus,base.system.defocus,1e-12,"Cancellation does not partially apply shared variables");near(cancelStates[0].values[0].value,7,1e-12,"Cancellation does not partially apply local states");
+ auto outside=quality;outside.variables={{VariableParameter::Defocus,0,1,2,.1}};
+ rejects([&]{optimizeConfigurations(base,states,outside);},"Shared variable outside bounds must not silently move the nominal design");
+ near(base.system.defocus,original.system.defocus,1e-12,"Rejected joint search preserves the nominal defocus");
  auto optimized=base;auto joint=optimizeConfigurations(optimized,states,quality);near(optimized.system.defocus,-3.5,1e-6,"Joint optimum matches independent weighted least squares of two distances");check(joint.after<joint.before,"Joint optimization actually improves all-state objective");
  // A local defocus is optimized separately from a shared (weakly constrained) radius.
  auto local=base;Configuration one{"One",1,{{{DesignParameter::Defocus,0},2,true,-4,4,.5}},{}},two{"Two",1,{{{DesignParameter::Defocus,0},-2,true,-4,4,.5}}, {}};
@@ -41,6 +44,13 @@ size_t studyChecks(){
  auto linkedPlan=plan;linkedPlan.operands={{{DesignParameter::Radius,1},0,1,ToleranceDistribution::Uniform}};ToleranceSample error;error.deltas={1};auto realization=toleranceRealization(linked,{},linkedPlan,error,false);near(realization.system.surfaces[1].radius,-49,1e-12,"Manufacturing deviation survives pickup by acting on resolved geometry");check(realization.system.solves.empty(),"Manufactured realization contains no nominal solve that could erase error");
  plan.operands[0].mean=0;plan.samples=20;calls=0;auto interrupted=runTolerances(base,{},quality,plan,[&](size_t,size_t,double){return ++calls<8;});check(interrupted.cancelled,"Monte Carlo can be cancelled inside its work");
 
+ for (int term : {0,3}) for (double a : {.001,1e-12,1e-18})
+     for (double dx : {0.,.01,.001,.0001,1e-5,1e-6,1e-7,1e-8,1e-9,1e-10,1e-12,1e-16}) {
+         Surface s; s.profile=SurfaceProfile::XYPolynomial; s.xySag[term]=a;
+         const Vec3 q{1,0,a}, dir=Vec3{dx,0,1}.unit();
+         const auto hit=intersectSurface(s,{}, {q-dir*10,dir,.55});
+         check(hit && std::abs(hit->distance-10)<1e-8,"Nearly planar XY surface retains known forward intersection");
+     }
  Surface free;free.profile=SurfaceProfile::XYPolynomial;free.radius=0;free.semiDiameter=4;free.xySag={.01,.002,.03,.004,-.003,.002,-.001};
  const double x=.4,y=-.3;const double z=.01*x*x+.002*x*y+.03*y*y+.004*x*x*x-.003*x*x*y+.002*x*y*y-.001*y*y*y;
  near(sag(free,x,y),z,1e-14,"Cartesian freeform sag matches independent polynomial evaluation");const auto normal=surfaceNormal(free,x,y);near(-normal.x/normal.z,.02*x+.002*y+.012*x*x-.006*x*y+.002*y*y,1e-12,"Freeform analytic X derivative matches expanded formula");
