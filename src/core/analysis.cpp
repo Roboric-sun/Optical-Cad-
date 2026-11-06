@@ -1,4 +1,5 @@
 #include "optics/model.hpp"
+#include "prepared_trace.hpp"
 #include <complex>
 #include <limits>
 #include <numeric>
@@ -17,7 +18,8 @@ RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int 
     out.tangentialAxis = radial.norm() > 1e-12 ? radial.unit() : Vec3{0, 1, 0};
     out.sagittalAxis = {out.tangentialAxis.y, -out.tangentialAxis.x, 0};
     if(hasCoordinates(sys)||usesAdvancedSurfaces(sys))throw std::invalid_argument("Ray fan локальных систем ещё не аттестован");
-    auto chief = trace(sys, cat, pupilRay(sys, cat, field, sys.wavelengths[sys.primary].um, 0, 0));
+    const PreparedTrace geometry(sys,cat);
+    auto chief = geometry.trace(geometry.aim(angles, sys.wavelengths[sys.primary].um, 0, 0));
     if (chief.status != TraceStatus::Complete)
         throw std::runtime_error("Primary chief ray does not reach image");
     out.referenceImage = chief.image;
@@ -33,8 +35,7 @@ RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int 
             auto& curve = plane ? out.sagittal : out.tangential;
             std::vector<double> values;
             for (double pupil : curve.x) {
-                auto result = trace(
-                    sys, cat, pupilRay(sys, cat, field, wave.um, pupil * axis.x, pupil * axis.y));
+                auto result = geometry.trace(geometry.aim(angles, wave.um, pupil * axis.x, pupil * axis.y));
                 values.push_back(result.status == TraceStatus::Complete
                                      ? (result.image - chief.image).dot(axis) * 1000
                                      : std::numeric_limits<double>::quiet_NaN());
@@ -44,12 +45,14 @@ RayFan rayFan(const SequentialSystem& sys, const Catalog& cat, Field field, int 
     }
     return out;
 }
-Spot spot(const SequentialSystem& sys, const Catalog& cat, Field field, int grid) {
-    if (!sys.solves.empty()) return spot(resolvedSystem(sys, cat), cat, field, grid);
+static Spot preparedSpot(const PreparedTrace& geometry, Field field, int grid) {
+    const auto& sys=geometry.system;
+    const auto& cat=geometry.catalog;
     if (grid == 0)
         grid = sys.pupilGrid;
     if (grid < 3 || grid > 65)
         throw std::invalid_argument("Pupil grid out of range");
+    const auto angles = angularField(sys,cat,field);
     Spot out;
     double total = 0;
     for (auto wave : sys.wavelengths)
@@ -59,17 +62,20 @@ Spot spot(const SequentialSystem& sys, const Catalog& cat, Field field, int grid
                 if (px * px + py * py > 1 + 1e-12)
                     continue;
                 ++out.launched;
-                auto t = trace(sys, cat, pupilRay(sys, cat, field, wave.um, px, py));
+                auto t = geometry.trace(geometry.aim(angles, wave.um, px, py));
                 if (t.status != TraceStatus::Complete)
                     continue;
                 double p = t.power * wave.weight;
-                const auto image=hasCoordinates(sys)?t.imageLocal:t.image;
+                const auto image=geometry.local?t.imageLocal:t.image;
                 out.samples.push_back({px, py, wave.um, image, p});
                 out.centroid = out.centroid + image * p;
                 total += p;
             }
-    if (total <= 0)
+    if (total <= 0) {
+        out.rms = out.maxRadius = std::numeric_limits<double>::quiet_NaN();
+        out.centroid = {out.rms, out.rms, out.rms};
         return out;
+    }
     out.centroid = out.centroid / total;
     for (auto& s : out.samples) {
         double r = (s.image - out.centroid).norm();
@@ -79,12 +85,31 @@ Spot spot(const SequentialSystem& sys, const Catalog& cat, Field field, int grid
     out.rms = sqrt(out.rms / total);
     return out;
 }
-static std::optional<WaveSample> waveSample(const SequentialSystem& s, const Catalog& c, Field f,
+Spot spot(const SequentialSystem& sys, const Catalog& cat, Field field, int grid) {
+    if (!sys.solves.empty()) return spot(resolvedSystem(sys,cat),cat,field,grid);
+    return preparedSpot(PreparedTrace(sys,cat),field,grid);
+}
+
+std::vector<Spot> fieldSpots(const SequentialSystem& sys, const Catalog& cat,
+                            const std::function<bool()>& cancelled) {
+    if (!sys.solves.empty()) return fieldSpots(resolvedSystem(sys,cat),cat,cancelled);
+    const PreparedTrace geometry(sys,cat);
+    std::vector<Spot> results;
+    results.reserve(sys.fields.size());
+    for (auto f : sys.fields) {
+        if (cancelled()) return {};
+        results.push_back(preparedSpot(geometry,f,sys.pupilGrid));
+    }
+    return results;
+}
+
+static std::optional<WaveSample> waveSample(const PreparedTrace& geometry, Field f,
                                             double px, double py, const Ray& chiefRay,
                                             const RayTrace& chief, double referenceRadius) {
+    const auto& s=geometry.system;
     double w = s.wavelengths[s.primary].um;
-    Ray ray = pupilRay(s, c, f, w, px, py);
-    auto t = trace(s, c, ray);
+    Ray ray = geometry.aim(f, w, px, py);
+    auto t = geometry.trace(ray);
     if (t.status != TraceStatus::Complete)
         return {};
     Vec3 oc = t.exitPoint - chief.image;
@@ -100,14 +125,20 @@ static std::optional<WaveSample> waveSample(const SequentialSystem& s, const Cat
     double opd = t.opl + t.index * dist + phase - chief.opl;
     return WaveSample{px, py, opd, t.power};
 }
+static void requireWaveOptics(const SequentialSystem& s) {
+    if (hasCoordinates(s) || usesAdvancedSurfaces(s))
+        throw std::invalid_argument("OPD/PSF/MTF этих профилей/масок/координат ещё не аттестованы; используйте геометрический анализ");
+}
 Wavefront wavefront(const SequentialSystem& s, const Catalog& c, Field f, int grid) {
     if (!s.solves.empty()) return wavefront(resolvedSystem(s, c), c, f, grid);
     if (grid < 3 || grid > 129) throw std::invalid_argument("Wavefront grid must be 3–129");
-    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("OPD этих профилей/масок/координат ещё не аттестован; используйте геометрический анализ");
+    requireWaveOptics(s);
     Wavefront out;
     out.wavelength = s.wavelengths.at(s.primary).um;
-    auto cr = pupilRay(s, c, f, out.wavelength, 0, 0);
-    auto chief = trace(s, c, cr);
+    const PreparedTrace geometry(s,c);
+    f=angularField(s,c,f);
+    auto cr = geometry.aim(f, out.wavelength, 0, 0);
+    auto chief = geometry.trace(cr);
     if (chief.status != TraceStatus::Complete)
         throw std::runtime_error("Chief ray does not reach image");
     double radius = (chief.exitPoint - chief.image).norm();
@@ -119,7 +150,7 @@ Wavefront wavefront(const SequentialSystem& s, const Catalog& c, Field f, int gr
             double x = 2.0 * ix / (grid - 1) - 1, y = 2.0 * iy / (grid - 1) - 1;
             if (x * x + y * y > 1 + 1e-12)
                 continue;
-            auto sample = waveSample(s, c, f, x, y, cr, chief, radius);
+            auto sample = waveSample(geometry, f, x, y, cr, chief, radius);
             if (sample) {
                 out.samples.push_back(*sample);
                 sum += sample->opd * sample->power;
@@ -182,6 +213,7 @@ static void fft2(std::vector<Complex>& a, int n) {
 }
 Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, int n) {
     if (!s.solves.empty()) return diffraction(resolvedSystem(s, c), c, f, n);
+    requireWaveOptics(s);
     if (s.primary >= s.wavelengths.size()) throw std::invalid_argument("Primary wavelength does not exist");
     if (n < 32 || n > 256 || (n & (n - 1)))
         throw std::invalid_argument("FFT size must be power of 2, 32–256");
@@ -189,8 +221,10 @@ Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, in
     out.size = n;
     std::vector<Complex> pupil(n * n);
     double w = s.wavelengths[s.primary].um;
-    auto cr = pupilRay(s, c, f, w, 0, 0);
-    auto chief = trace(s, c, cr);
+    const PreparedTrace geometry(s,c);
+    f=angularField(s,c,f);
+    auto cr = geometry.aim(f, w, 0, 0);
+    auto chief = geometry.trace(cr);
     if (chief.status != TraceStatus::Complete)
         throw std::runtime_error("Chief ray blocked");
     double r = (chief.exitPoint - chief.image).norm();
@@ -206,7 +240,7 @@ Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, in
             // FFT samples physical pupil positions, never a stretched nominal grid.
             const auto nominal = nominalPupil(f, px, py);
             if (!nominal) continue;
-            auto sample = waveSample(s, c, f, nominal->x, nominal->y, cr, chief, r);
+            auto sample = waveSample(geometry, f, nominal->x, nominal->y, cr, chief, r);
             if (sample)
                 pupil[y * n + x] =
                     std::polar(sqrt(sample->power), 2 * pi * sample->opd / (w * 1e-3));
@@ -241,7 +275,7 @@ Diffraction diffraction(const SequentialSystem& s, const Catalog& c, Field f, in
 Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog& c, Field field,
                                     int size, int grid) {
     auto s = resolvedSystem(sys, c);
-    if(hasCoordinates(s)||usesAdvancedSurfaces(s))throw std::invalid_argument("PSF/MTF этих профилей/масок/координат ещё не аттестована");
+    requireWaveOptics(s);
     if (size < 32 || size > 128 || (size & (size - 1)) || grid < size / 2 + 1 || grid > 65)
         throw std::invalid_argument("Exit-pupil diffraction: image 32/64/128, pupil grid 9–65");
     auto errors = s.validate(c);
@@ -254,7 +288,8 @@ Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog&
     s.fieldType = FieldType::Angle;
     Field unvignetted = angular;
     unvignetted.vux = unvignetted.vlx = unvignetted.vuy = unvignetted.vly = 0;
-    const auto reference = trace(s, c, pupilRay(s, c, unvignetted, s.wavelengths[s.primary].um, 0, 0));
+    const PreparedTrace geometry(s,c);
+    const auto reference = geometry.trace(geometry.aim(unvignetted, s.wavelengths[s.primary].um, 0, 0));
     if (reference.status != TraceStatus::Complete) throw std::runtime_error("Primary chief ray blocked");
     struct Sample { double x, y, phase, amplitude; };
     struct Channel { double wavelength, radius, index, weight; Vec3 offset; std::vector<Sample> samples; };
@@ -282,8 +317,8 @@ Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog&
         }
         if (std::abs(D) < 1e-8) throw std::invalid_argument("Exit pupil at infinity is unsupported");
         const double pupilZ = s.vertices().back() - n * B / D;
-        const auto chiefRay = pupilRay(s, c, unvignetted, w, 0, 0);
-        const auto chief = trace(s, c, chiefRay);
+        const auto chiefRay = geometry.aim(unvignetted, w, 0, 0);
+        const auto chief = geometry.trace(chiefRay);
         if (chief.status != TraceStatus::Complete) throw std::runtime_error("Spectral chief ray blocked");
         auto project = [&](const RayTrace& t) {
             return t.exitPoint + t.exitDirection * ((pupilZ - t.exitPoint.z) / t.exitDirection.z);
@@ -294,15 +329,15 @@ Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog&
         Channel channel{w, radius, n, 0, chief.image - reference.image, {}};
         double extent = 0;
         auto mapping = [&](double x, double y) -> std::optional<Vec3> {
-            const auto path = trace(s, c, pupilRay(s, c, unvignetted, w, x, y), false, SIZE_MAX, false);
+            const auto path = geometry.trace(geometry.aim(unvignetted, w, x, y), false, SIZE_MAX, false);
             if (path.status != TraceStatus::Complete || std::abs(path.exitDirection.z) < .9) return {};
             return project(path);
         };
         for (int iy = 0; iy < grid; ++iy) for (int ix = 0; ix < grid; ++ix) {
             const double x = -1 + ix * step, y = -1 + iy * step;
             if (!nominalPupil(angular, x, y)) continue;
-            const auto ray = pupilRay(s, c, unvignetted, w, x, y);
-            const auto path = trace(s, c, ray);
+            const auto ray = geometry.aim(unvignetted, w, x, y);
+            const auto path = geometry.trace(ray);
             if (path.status != TraceStatus::Complete) continue;
             const auto ep = project(path);
             const auto dx = mapping(x + 1e-4, y), dy = mapping(x, y + 1e-4);
@@ -314,7 +349,7 @@ Diffraction polychromaticDiffraction(const SequentialSystem& sys, const Catalog&
             const auto relative = ep - centre;
             if (std::hypot(relative.x, relative.y) / radius > .25)
                 throw std::invalid_argument("Exit-pupil scalar model requires pupil radius / image distance ≤ 0.25");
-            const auto wave = waveSample(s, c, unvignetted, x, y, chiefRay, chief, radius);
+            const auto wave = waveSample(geometry, unvignetted, x, y, chiefRay, chief, radius);
             if (!wave) throw std::runtime_error("Reference sphere intersection failed");
             // Flux conservation: E_exit=sqrt(T/J); dA_exit=J dA_input.
             channel.samples.push_back({relative.x, relative.y, 2 * pi * wave->opd / (w * 1e-3),
@@ -382,7 +417,7 @@ OptimizationResult optimizeRadii(SequentialSystem& system, const Catalog& c, siz
             double val = 0, weights = 0;
             for (auto f : candidate.fields) {
                 auto sp = spot(candidate, c, f, 9);
-                if (sp.samples.size() < sp.launched * 0.9)
+                if (!std::isfinite(sp.rms) || sp.samples.size() < sp.launched * 0.9)
                     return 1e9;
                 val += f.weight * sp.rms * sp.rms;
                 weights += f.weight;
@@ -561,8 +596,7 @@ AnalysisCurve geometricMTF(const Spot& sp, double maximumFrequency, int samples)
     double total = 0;
     for (auto p : sp.samples)
         total += p.power;
-    if (total <= 0)
-        return out;
+    if (total <= 0) return out;
     for (int i = 0; i < samples; ++i) {
         double f = maximumFrequency * i / (samples - 1.);
         out.x.push_back(f);

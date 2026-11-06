@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "solve_editor.hpp"
 #include "window.hpp"
 #include <QAction>
@@ -70,7 +71,7 @@ size_t solveGUIChecks(Window& w, const QString& dir) {
     QTest::qWait(200);
     close(w.project().system.surfaces[1].radius, -65, "Changing the source updates its pickup immediately");
     close(table->item(2,3)->text().toDouble(), -65, "Dependent cell displays the newly calculated radius");
-    check(w.results()->error.isEmpty(), "Updated pickup geometry recalculates successfully");
+    check(readyResults(w)->error.isEmpty(), "Updated pickup geometry recalculates successfully");
     w.findChild<QAction*>("undoAction")->trigger();
     close(w.project().system.surfaces[1].radius, -50, "Undo source edit updates its dependent value");
     w.findChild<QAction*>("undoAction")->trigger();
@@ -119,10 +120,10 @@ size_t solveGUIChecks(Window& w, const QString& dir) {
     auto* surfaceType = qobject_cast<QComboBox*>(table->cellWidget(1,2));
     surfaceType->setCurrentIndex(1);
     QTest::qWait(200);
-    check(!w.results()->error.isEmpty() && w.results()->spots.empty(), "Incompatible surface kind reports an error instead of showing stale calculations");
+    check(!readyResults(w)->error.isEmpty() && readyResults(w)->spots.empty(), "Incompatible surface kind reports an error instead of showing stale calculations");
     w.findChild<QAction*>("undoAction")->trigger();
     QTest::qWait(200);
-    check(w.results()->error.isEmpty() && serializeProject(w.project()) == bytes, "Undo recovers a valid constrained system after a type edit");
+    check(readyResults(w)->error.isEmpty() && serializeProject(w.project()) == bytes, "Undo recovers a valid constrained system after a type edit");
 
     // Removing a source or splitting a constrained edge must preserve the project.
     table->setCurrentCell(1,3);

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
-project(OpticalCAD VERSION 1.5.0 LANGUAGES CXX)
-set(OPTICS_RELEASE_LABEL "1.5.0")
+project(OpticalCAD VERSION 1.5.1 LANGUAGES CXX)
+set(OPTICS_RELEASE_LABEL "1.5.1")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -35,7 +35,7 @@ if(OPTICS_BUILD_GUI)
   target_include_directories(optics_project PUBLIC src/app)
   add_executable(optics_batch src/batch.cpp)
   target_link_libraries(optics_batch PRIVATE optics_project)
-  add_library(optics_ui STATIC src/app/window.cpp src/app/office.cpp src/app/plots.cpp
+  add_library(optics_ui STATIC src/app/sequential_analysis.cpp src/app/window.cpp src/app/office.cpp src/app/plots.cpp
     src/app/optimization_editor.cpp src/app/solve_editor.cpp src/app/learning_help.cpp
     src/app/field_editor.cpp src/app/python_console.cpp src/app/coordinate_editor.cpp src/app/shape_editor.cpp src/app/study_editor.cpp)
   target_link_libraries(optics_ui PUBLIC optics_project Qt6::Widgets Qt6::Concurrent)
@@ -45,7 +45,7 @@ if(OPTICS_BUILD_GUI)
   set_target_properties(optical_cad PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "Optical CAD" MACOSX_BUNDLE_GUI_IDENTIFIER "ru.opticalcad.desktop" MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION} MACOSX_BUNDLE_SHORT_VERSION_STRING ${OPTICS_RELEASE_LABEL})
   qt_add_executable(optics_gui_tests tests/gui_tests.cpp tests/gui_improvement_tests.cpp tests/combo_tests.cpp
     tests/solve_gui_tests.cpp tests/marginal_gui_tests.cpp tests/field_gui_tests.cpp tests/field_type_gui_tests.cpp
-    tests/release_gui_tests.cpp tests/tester_feedback_gui_tests.cpp tests/lm_gui_tests.cpp tests/coordinate_gui_tests.cpp tests/surface_shape_gui_tests.cpp tests/study_gui_tests.cpp)
+    tests/release_gui_tests.cpp tests/tester_feedback_gui_tests.cpp tests/lm_gui_tests.cpp tests/coordinate_gui_tests.cpp tests/surface_shape_gui_tests.cpp tests/study_gui_tests.cpp tests/audit_gui_tests.cpp)
   target_link_libraries(optics_gui_tests PRIVATE optics_ui Qt6::Test)
   target_compile_definitions(optics_gui_tests PRIVATE OPTICS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_dependencies(optical_cad optics_batch)

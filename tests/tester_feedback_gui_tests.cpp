@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "window.hpp"
 #include "number_input.hpp"
 #include <QAction>
@@ -104,12 +105,12 @@ size_t testerFeedbackGUIChecks(Window& w,const QString& dir) {
     const auto para=paraxial(eye.system,eye.catalog,.5875618);
     near(1000*1.336/para.efl,58.64,.01,"Gullstrand power matches published rounded 58.64 D");
     near(eye.system.vertices().back()+para.bfl,24.387,.003,"Gullstrand focal plane agrees with published rounded position");
-    check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty() && w.results()->diffractionError.isEmpty(),"Gullstrand GUI computes spot, wavefront and PSF/MTF");
-    check(!w.results()->geometryWarning.isEmpty(),"Trimmed nuclear continuations have a visible nonfatal diagnostic");
+    check(readyResults(w)->error.isEmpty() && readyResults(w)->waveError.isEmpty() && readyResults(w)->diffractionError.isEmpty(),"Gullstrand GUI computes spot, wavefront and PSF/MTF");
+    check(!readyResults(w)->geometryWarning.isEmpty(),"Trimmed nuclear continuations have a visible nonfatal diagnostic");
     auto* rayCount=w.findChild<QSpinBox*>("layoutRayCount");check(rayCount!=nullptr,"Sequential ray-count control is discoverable");
-    const double rms=w.results()->spots[0].rms;rayCount->setValue(31);
-    check(w.results()->layoutRays==31,"Ray-count control changes displayed beam sampling");
-    near(w.results()->spots[0].rms,rms,1e-14,"Display ray count does not alter numerical analyses");
+    const double rms=readyResults(w)->spots[0].rms;rayCount->setValue(31);
+    check(readyResults(w)->layoutRays==31,"Ray-count control changes displayed beam sampling");
+    near(readyResults(w)->spots[0].rms,rms,1e-14,"Display ray count does not alter numerical analyses");
     QTemporaryDir temporary;const QString path=temporary.filePath("eye.optcad");
     auto selectFile=[&](const QString& file){QTimer::singleShot(0,&w,[&,file]{
         auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());if(!dialog)return;
@@ -131,7 +132,7 @@ size_t testerFeedbackGUIChecks(Window& w,const QString& dir) {
     w.setProject(eye);w.recalculate();
     auto wheel=[](PlotWidget& plot,QPointF at){QWheelEvent event(at,plot.mapToGlobal(at.toPoint()),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&plot,&event);plot.grab();};
     for(auto view : {View::Layout,View::Spot,View::Fan,View::OPD,View::Wavefront,View::PSF,View::MTF,View::RMS,View::Longitudinal,View::FieldCurvature,View::ChromaticFocus,View::GeometricMTF}) {
-        PlotWidget plot(view);plot.resize(960,600);plot.setData(w.results());plot.show();plot.grab();
+        PlotWidget plot(view);plot.resize(960,600);plot.setData(readyResults(w));plot.show();plot.grab();
         check(!plot.axisViews().empty(),"Analysis exposes painted axes for interaction");
         auto first=plot.axisViews().front();wheel(plot,first.rect.center());auto both=plot.axisViews().front();
         check(both.xmax-both.xmin<first.xmax-first.xmin && both.ymax-both.ymin<first.ymax-first.ymin,"Wheel inside graph zooms both axes");
@@ -165,8 +166,8 @@ size_t testerFeedbackGUIChecks(Window& w,const QString& dir) {
     w.setProject(eye);QTest::qWait(120);
     if(!dir.isEmpty())w.grab().save(dir+"/gullstrand_window.png");
     auto invalid=eye;invalid.system.surfaces[0].material="MISSING_MATERIAL";w.setProject(invalid);w.recalculate();
-    PlotWidget draft(View::Layout);draft.resize(900,600);draft.setData(w.results());draft.show();draft.grab();
-    check(!w.results()->error.isEmpty() && !draft.axisViews().empty(),"An invalid draft keeps its geometric preview instead of a blank canvas");
+    PlotWidget draft(View::Layout);draft.resize(900,600);draft.setData(readyResults(w));draft.show();draft.grab();
+    check(!readyResults(w)->error.isEmpty() && !draft.axisViews().empty(),"An invalid draft keeps its geometric preview instead of a blank canvas");
     w.setProject(original);
     return checks;
 }

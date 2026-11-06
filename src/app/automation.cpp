@@ -68,9 +68,14 @@ QJsonObject executeRequest(const QJsonObject& request) {
             QJsonObject item{{"x",field.x},{"y",field.y},{"unit",s.fieldType==FieldType::Angle?"deg":"mm"},
                 {"rms_mm",sp.rms},{"centroid_mm",vector(sp.centroid)},{"launched",double(sp.launched)},
                 {"survived",double(sp.samples.size())}};
+            if (!std::isfinite(sp.rms)) {
+                item["spot_status"] = "no_power";
+                item["rms_mm"] = QJsonValue::Null;
+                item["centroid_mm"] = QJsonValue::Null;
+            } else item["spot_status"] = "ok";
             try {const auto wf=wavefront(s,c,field,grid);item["opd_rms_mm"]=wf.rms;item["opd_pv_mm"]=wf.pv;}
             catch(const std::exception& e){item["wavefront_error"]=QString::fromUtf8(e.what());}
-            if (!sp.samples.empty()) {
+            if (std::isfinite(sp.rms)) {
                 const auto energy=encircledEnergy(sp);
                 item["encircled_radius_mm"]=values(energy.x); item["encircled_fraction"]=values(energy.y[0]);
             }

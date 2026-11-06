@@ -471,32 +471,33 @@ Project deserializeProject(const QByteArray& bytes, bool validate) {
         plan.pupilGrid = int(integer(j, "pupilGrid", 33));
         plan.minimumThroughput = number(j, "minimumThroughput");
         plan.refocus = j["refocus"].toBool();
-        // Undo snapshots can temporarily contain settings invalidated by a field edit.
-        if (validate) {
-            auto errors = plan.validate(s);
-            if (!errors.empty()) throw std::invalid_argument(errors.front());
-        }
         p.optimization = std::move(plan);
     }
-    if (validate) {
-        auto a = s.validate(p.catalog), b = scene.validate(p.catalog);
-        if (!a.empty())
-            throw std::invalid_argument(a.front());
-        if (!b.empty())
-            throw std::invalid_argument(b.front());
-    }
-    readStudies(root,p,validate);
+    readStudies(root, p);
+    if (validate) validateProject(p);
     return p;
 }
+
+void validateProject(const Project& p) {
+    auto requireValid = [](const auto& errors) {
+        if (!errors.empty()) throw std::invalid_argument(errors.front());
+    };
+    requireValid(p.system.validate(p.catalog));
+    requireValid(p.scene.validate(p.catalog));
+    if (p.optimization) requireValid(p.optimization->validate(p.system));
+    const OpticalDesign base{p.system, p.catalog};
+    if (p.tolerance) requireValid(p.tolerance->validate(base, p.configurations));
+    else requireValid(validateConfigurations(base, p.configurations));
+}
+
 void saveProject(const QString& path, const Project& p) {
-    auto studyErrors=validateConfigurations({p.system,p.catalog},p.configurations);if(studyErrors.empty()&&p.tolerance)studyErrors=p.tolerance->validate({p.system,p.catalog},p.configurations);if(!studyErrors.empty())throw std::invalid_argument(studyErrors.front());
+    auto resolved = p;
+    applySolves(resolved.system, resolved.catalog);
+    validateProject(resolved);
+    const auto bytes = serializeProject(resolved);
+    if (bytes.size() > 32 * 1024 * 1024)
+        throw std::runtime_error("Проект превышает предел чтения 32 МБ");
     QSaveFile file(path);
-    auto bytes = [&] {
-        if (p.system.solves.empty()) return serializeProject(p);
-        auto resolved = p;
-        applySolves(resolved.system, resolved.catalog);
-        return serializeProject(resolved);
-    }();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
         throw std::runtime_error("Cannot save project");
 }

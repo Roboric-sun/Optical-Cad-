@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "optimization_editor.hpp"
 #include "window.hpp"
 #include <QAbstractButton>
@@ -169,10 +170,10 @@ size_t improvementChecks(Window& w, const QString& dir) {
     project.scene.objects.push_back(extra);
     w.setProject(project);
     click("traceSceneButton");
-    check(QTest::qWaitFor([&] { return !w.calculating(); }, 15000) && w.results()->detectorStats.size() == 2,
+    check(QTest::qWaitFor([&] { return !w.calculating(); }, 15000) && readyResults(w)->detectorStats.size() == 2,
           "A real scene trace computes statistics for every detector");
-    const auto& first = w.results()->detectorStats[0];
-    check(first.hasPower && first.power == w.results()->scene->detectors[0].totalPower(),
+    const auto& first = readyResults(w)->detectorStats[0];
+    check(first.hasPower && first.power == readyResults(w)->scene->detectors[0].totalPower(),
           "Selected detector statistics preserve actual traced power");
     w.findChild<QTabBar*>("modeTabs")->setCurrentIndex(2);
     click("analysis_14");
@@ -207,16 +208,16 @@ size_t improvementChecks(Window& w, const QString& dir) {
           "Detector summary command exports quantitative footprint metrics");
     auto* selector = w.findChild<QComboBox*>("detectorCombo");
     selector->setCurrentIndex(1);
-    check(w.results()->detector == 1 && !w.results()->detectorStats[1].hasPower,
+    check(readyResults(w)->detector == 1 && !readyResults(w)->detectorStats[1].hasPower,
           "Selecting an unilluminated detector updates profiles without inventing moments");
-    check(detectorStatisticsCSV(w.results()->scene->detectors[1], w.results()->detectorStats[1], 1, true)
+    check(detectorStatisticsCSV(readyResults(w)->scene->detectors[1], readyResults(w)->detectorStats[1], 1, true)
               .contains("centroid_x,,mm\n"),
           "Undefined zero-power detector moments are blank in CSV");
-    check(detectorStatisticsCSV(w.results()->scene->detectors[0], first, 1, true)
+    check(detectorStatisticsCSV(readyResults(w)->scene->detectors[0], first, 1, true)
               .contains("partial_trace,1,boolean\n"),
           "Partial trace status is retained in detector summaries");
     w.findChild<QTableWidget*>("objectTable")->item(0, 6)->setText("30");
-    check(!w.results()->scene && w.results()->detectorStats.empty(),
+    check(!readyResults(w)->scene && readyResults(w)->detectorStats.empty(),
           "Editing scene geometry invalidates both maps and derived detector metrics");
     w.setProject(Project{});
     return checks;

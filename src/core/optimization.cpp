@@ -22,9 +22,6 @@ double variableValue(const SequentialSystem& s, const OptimizationVariable& v) {
     case VariableParameter::Radius: return surface.radius;
     case VariableParameter::Thickness: return surface.thickness;
     case VariableParameter::Conic: return surface.conic;
-    case VariableParameter::A4: case VariableParameter::A6:
-    case VariableParameter::A8: case VariableParameter::A10:
-        return surface.asphere[size_t(v.parameter) - size_t(VariableParameter::A4)];
     default: throw std::invalid_argument("Unknown optimization parameter");
     }
 }

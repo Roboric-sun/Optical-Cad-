@@ -69,6 +69,7 @@ int verifyInstallation(Window& window, const QString& reportPath) {
         check(temporary.isValid(), "Fresh project directory available");
         check(!QFontDatabase::families().isEmpty(), "System fonts available");
         window.show(); QApplication::processEvents();
+        wait([&]{return !window.analyzing();});
         check(window.results() && window.results()->error.isEmpty(), "Initial GUI analyses succeed");
         auto* table = window.findChild<QTableWidget*>("surfaceTable");
         check(table != nullptr, "Surface editor available");
@@ -87,7 +88,6 @@ int verifyInstallation(Window& window, const QString& reportPath) {
         check(console != nullptr, "Packaged Python console opens");
         auto* source = console->findChild<QPlainTextEdit*>("pythonSource");
         auto* run = console->findChild<QPushButton*>("pythonRun");
-        auto* stop = console->findChild<QPushButton*>("pythonStop");
         source->setPlainText("project.system['surfaces'][0]['radius'] += 2\nprint(project.analyze()['efl_mm'])");
         run->click(); wait([&] { return run->isEnabled(); });
         check(window.project().system.surfaces.front().radius == original + 7, "Packaged SDK and batch apply Python result");
@@ -101,7 +101,7 @@ int verifyInstallation(Window& window, const QString& reportPath) {
         console = dynamic_cast<PythonConsole*>(window.findChild<QDialog*>("pythonConsole"));
         source = console->findChild<QPlainTextEdit*>("pythonSource");
         run = console->findChild<QPushButton*>("pythonRun");
-        stop = console->findChild<QPushButton*>("pythonStop");
+        auto* stop = console->findChild<QPushButton*>("pythonStop");
         const auto before = serializeProject(window.project());
         const QString ready = temporary.filePath("child-ready");
         const QString marker = temporary.filePath("child-survived");
