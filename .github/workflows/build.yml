@@ -128,6 +128,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: download-*
@@ -140,6 +141,9 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_TAG: desktop-${{ github.run_number }}-${{ github.run_attempt }}
         run: |
+          version=$(sed -n 's/^project(OpticalCAD VERSION \([0-9.]*\) LANGUAGES CXX).*/\1/p' CMakeLists.txt)
+          test -n "$version"
           cd downloads
-          sha256sum OpticalCAD-* > SHA256SUMS.txt
-          gh release create "$RELEASE_TAG" OpticalCAD-* SHA256SUMS.txt --target "$RELEASE_SHA" --latest --title "Optical CAD — build ${{ github.run_number }}" --notes "Windows x64: download OpticalCAD-Setup-Windows-x64.exe and run the installer. macOS Apple Silicon: download OpticalCAD-macOS-arm64.zip and extract. Built and tested from main ($RELEASE_SHA). Packages are not signed with a publisher certificate; operating system security prompts may appear. Python scripting requires Python 3 installed separately."
+          printf 'Optical CAD %s\nSource: %s\n' "$version" "$RELEASE_SHA" > VERSION.txt
+          sha256sum OpticalCAD-* VERSION.txt > SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" OpticalCAD-* VERSION.txt SHA256SUMS.txt --target "$RELEASE_SHA" --latest --title "Optical CAD $version" --notes "Version $version. Windows x64: download OpticalCAD-Setup-Windows-x64.exe and run the installer. macOS Apple Silicon: download OpticalCAD-macOS-arm64.zip and extract. Built and tested from main ($RELEASE_SHA). Packages are not signed with a publisher certificate; operating system security prompts may appear. Python scripting requires Python 3 installed separately."
