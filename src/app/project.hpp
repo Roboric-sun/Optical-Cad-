@@ -16,6 +16,7 @@ struct Project {
 };
 QByteArray serializeProject(const Project&);
 Project deserializeProject(const QByteArray&, bool validate = true);
+void validateProject(const Project&);
 void saveProject(const QString&, const Project&);
 Project loadProject(const QString&);
 Project gullstrandEyeProject();
@@ -31,7 +32,7 @@ Project cylindricalLensProject();
 Project toroidalLensProject();
 Project obscuredApertureProject();
 void writeStudies(QJsonObject&,const Project&);
-void readStudies(const QJsonObject&,Project&,bool validate);
+void readStudies(const QJsonObject&,Project&);
 void reindexStudies(Project&,const std::vector<size_t>&);
 Project configurationProject(const Project&,size_t index);
 Project realizedProject(const Project&,const optics::ToleranceSample&,size_t configuration,bool compensated=true);

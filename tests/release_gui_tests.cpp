@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "window.hpp"
 #include "automation.hpp"
 #include "python_console.hpp"
@@ -87,7 +88,7 @@ size_t releaseGUIChecks(Window& window,const QString& dir) {
     }
     Project poly;poly.system.pupilDiameter=.5;poly.workspace["polychromaticDiffraction"]=true;
     window.setProject(poly);window.recalculate();
-    check(window.results()->diffractionError.isEmpty() && !window.results()->diffraction.psf.empty(),"GUI computes spectral PSF through shared core");
+    check(readyResults(window)->diffractionError.isEmpty() && !readyResults(window)->diffraction.psf.empty(),"GUI computes spectral PSF through shared core");
     if(!dir.isEmpty())window.grab().save(dir+"/release_spectral.png");
     window.setProject(Project{});
     return count;

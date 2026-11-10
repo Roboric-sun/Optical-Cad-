@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "field_editor.hpp"
 #include "window.hpp"
 #include <QAction>
@@ -82,7 +83,7 @@ size_t fieldGUIChecks(Window& w,const QString& dir) {
     w.findChild<QAction*>("redoAction")->trigger(); QTest::qWait(150);
     close(w.project().system.fields[1].vuy,.3,"Redo restores vignetting");
     w.findChild<QComboBox*>("fieldCombo")->setCurrentIndex(1); w.recalculate();
-    check(w.results()->error.isEmpty() && w.results()->waveError.isEmpty() && !w.results()->diffraction.psf.empty(),"Geometry and wave analyses work with edited vignetting");
+    check(readyResults(w)->error.isEmpty() && readyResults(w)->waveError.isEmpty() && !readyResults(w)->diffraction.psf.empty(),"Geometry and wave analyses work with edited vignetting");
     // Open a previously unsupported original Geopter system with all factors intact.
     QFile file(QString(OPTICS_SOURCE_DIR)+"/examples/geopter/dbgauss.json");
     check(file.open(QIODevice::ReadOnly),"Pinned Double Gauss fixture is available"); const auto input=file.readAll();
@@ -112,7 +113,7 @@ size_t fieldGUIChecks(Window& w,const QString& dir) {
         check(failed,"Malformed Geopter vignetting is rejected instead of discarded");
     }
     w.setProject(gauss); w.findChild<QComboBox*>("fieldCombo")->setCurrentIndex(2); w.recalculate();
-    check(w.results()->error.isEmpty() && w.results()->spots.size()==3 && !w.results()->spots[2].samples.empty(),"Imported outer field produces real spot samples");
+    check(readyResults(w)->error.isEmpty() && readyResults(w)->spots.size()==3 && !readyResults(w)->spots[2].samples.empty(),"Imported outer field produces real spot samples");
     QTest::qWait(200);
     if(!dir.isEmpty()) w.grab().save(dir+"/double_gauss.png");
     // Cancel and stale modal editing must not overwrite work performed while the dialog is open.

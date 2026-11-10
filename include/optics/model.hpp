@@ -189,6 +189,7 @@ struct Spot {
     size_t launched = 0;
 };
 Spot spot(const SequentialSystem&, const Catalog&, Field, int grid = 0);
+std::vector<Spot> fieldSpots(const SequentialSystem&, const Catalog&, const std::function<bool()>& cancelled);
 struct WaveSample {
     double px = 0, py = 0, opd = 0, power = 0;
 };

@@ -1,3 +1,4 @@
+#include "plot_scale.hpp"
 #include "plots.hpp"
 #include <QMouseEvent>
 #include <QPainter>
@@ -193,6 +194,26 @@ void PlotWidget::mouseMoveEvent(QMouseEvent* e) {
         update();
     }
 }
+static void drawTicks(QPainter& painter, const PlotWidget::AxisView& axis, bool grid) {
+    auto r=axis.rect;
+    for (bool horizontal : {true, false}) {
+        const double lo=horizontal ? axis.xmin : axis.ymin, hi=horizontal ? axis.xmax : axis.ymax;
+        for (double value : plotScale::ticks(lo,hi,horizontal?r.width():r.height(),horizontal?72.:40.)) {
+            const double u=(value-lo)/(hi-lo);
+            const double x=r.left()+r.width()*u, y=r.bottom()-r.height()*u;
+            if (grid || value==0) {
+                painter.setPen(value==0 ? QColor("#849cb2") : QColor("#e5edf4"));
+                if (horizontal) painter.drawLine(QPointF(x,r.top()),QPointF(x,r.bottom()));
+                else painter.drawLine(QPointF(r.left(),y),QPointF(r.right(),y));
+            }
+            painter.setPen(QColor("#536b80"));
+            const auto label=QString::number(value==0?0:value,'g',6);
+            if (horizontal) painter.drawText(QRectF(x-37,r.bottom()+3,74,18),Qt::AlignCenter,label);
+            else painter.drawText(QRectF(r.left()-57,y-9,53,18),Qt::AlignRight,label);
+        }
+    }
+}
+
 void PlotWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -234,8 +255,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
     }
     if (view == View::Detector && officePresentation) {
         const double top = toolbar ? 46 : 20;
-        const double side = std::max(80., std::min(height() - top - 12., width() * .28));
-        const QRectF mapRect(12, top, side, side);
+        const double side = std::max(40., std::min(height() - top - 28., width() * .28));
+        const QRectF mapRect(55, top, side, side);
         const DetectorData* detector = nullptr;
         const SceneTrace* scene = d.scene ? &*d.scene : nullptr;
         if (scene && !scene->detectors.empty())
@@ -261,6 +282,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             axes_.push_back({mapRect,xmin,xmax,ymin,ymax,spanX,spanY});
             p.drawImage(mapRect,image,QRectF((xmin/spanX+.5)*dt.nx,(.5-ymax/spanY)*dt.ny,
                                            (xmax-xmin)/spanX*dt.nx,(ymax-ymin)/spanY*dt.ny));
+            drawTicks(p,axes_.back(),false);
         } else {
             p.setPen(QColor("#ddd9ea"));
             p.drawText(mapRect.adjusted(8, 8, -8, -8), Qt::AlignCenter | Qt::TextWordWrap,
@@ -332,24 +354,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         const double dx = baseX/(2*zoom*zoomX), dy = baseY/(2*zoom*zoomY);
         xmin = cx-dx; xmax = cx+dx; ymin = cy-dy; ymax = cy+dy;
         axes_.push_back({area,xmin,xmax,ymin,ymax,baseX,baseY});
-        p.setPen(QPen(QColor("#e5edf4"), 1));
-        for (int i = 0; i <= 4; ++i) {
-            double f = i / 4.;
-            if (grid) {
-                p.drawLine(QPointF(area.left() + area.width() * f, area.top()),
-                           QPointF(area.left() + area.width() * f, area.bottom()));
-                p.drawLine(QPointF(area.left(), area.top() + area.height() * f),
-                           QPointF(area.right(), area.top() + area.height() * f));
-            }
-            p.setPen(QColor("#637b8e"));
-            {
-                p.drawText(QRectF(area.left() + area.width() * f - 40, area.bottom() + 6, 80, 18),
-                           Qt::AlignCenter, QString::number(xmin + (xmax - xmin) * f, 'g', 4));
-                p.drawText(QRectF(0, area.bottom() - area.height() * f - 9, 50, 18), Qt::AlignRight,
-                           QString::number(ymin + (ymax - ymin) * f, 'g', 4));
-            }
-            p.setPen(QPen(QColor("#e5edf4"), 1));
-        }
+        drawTicks(p,axes_.back(),grid);
         p.setPen(QColor("#d0deec"));
         p.drawRect(area);
         p.setPen(QColor("#637b8e"));
@@ -384,9 +389,9 @@ void PlotWidget::paintEvent(QPaintEvent*) {
                 const double h=2.*j/(std::clamp(d.layoutRays,3,101)-1)-1;
                 try {auto path=trace(sys,cat,pupilRay(sys,cat,sys.fields[f],sys.wavelengths[sys.primary].um,layoutProjection==1?h:0,layoutProjection==1?0:h));for(const auto& p:path.points)include(p);rays.push_back({f,std::move(path)});}catch(const std::exception&){}
             }
-            double sx=std::max(10.,xmax-xmin)*1.15,sy=std::max(10.,ymax-ymin)*1.15;
+            double sx=2.3*std::max({5.,std::abs(xmin),std::abs(xmax)}),sy=2.3*std::max({5.,std::abs(ymin),std::abs(ymax)});
             const double aspect=area.width()/area.height();sx=std::max(sx,sy*aspect);sy=std::max(sy,sx/aspect);
-            auto map=axes((xmin+xmax-sx)/2,(xmin+xmax+sx)/2,(ymin+ymax-sy)/2,(ymin+ymax+sy)/2,
+            auto map=axes(-sx/2,sx/2,-sy/2,sy/2,
                 layoutProjection==2?"X, мм":"Z, мм",layoutProjection==1?"X, мм":"Y, мм");
             auto project=[&](Vec3 p){const auto a=xy(p);return map(a.x(),a.y());};
             p.save();p.setClipRect(area);
@@ -439,7 +444,8 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             try {height = std::max(height,std::abs(tan(angularField(sys,cat,field).y*deg)*length)*1.15+10);}
             catch(const std::exception&) {}
         }
-        auto map = axes(-25, length + 5, -height, height, "Z, мм", "Y, мм");
+        const double spanZ=std::max({30.,length+5.,std::abs(sys.imageZ())+5.});
+        auto map = axes(-spanZ, spanZ, -height, height, "Z, мм", "Y, мм");
         p.save();
         p.setClipRect(area);
         p.setPen(QPen(QColor("#bdcbd6"), 1, Qt::DashLine));
@@ -565,6 +571,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         if (d.spots.empty())
             return;
         const auto& sp = d.spots.at(std::min(size_t(d.field), d.spots.size() - 1));
+        if (!std::isfinite(sp.rms)) {p.drawText(area,Qt::AlignCenter,"Нет мощности на изображении · RMS не определён"); return;}
         double limit = std::max(.001, sp.maxRadius * 1.15) * 1000;
         auto map = axes(-limit, limit, -limit, limit, "X, мкм", "Y, мкм · полихроматическое пятно");
         p.save();
@@ -628,19 +635,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
             p.setPen(QColor("#245c8d"));
             p.drawText(QRectF(panel.left(), 61, panel.width(), 18), Qt::AlignCenter,
                        plane ? "Сагиттальная аберрация, мкм" : "Тангенциальная аберрация, мкм");
-            for (int tick = 0; tick <= 4; ++tick) {
-                double x = xmin + (xmax-xmin)*tick/4, y = ymin+(ymax-ymin)*tick/4;
-                if (grid) {
-                    p.setPen(QPen(QColor("#e5edf4"), 1));
-                    p.drawLine(map(x, ymin), map(x, ymax));
-                    p.drawLine(map(xmin, y), map(xmax, y));
-                }
-                p.setPen(QColor("#637b8e"));
-                p.drawText(QRectF(map(x, ymin).x() - 26, panel.bottom() + 5, 52, 18),
-                           Qt::AlignCenter, QString::number(x));
-                p.drawText(QRectF(panel.left() - 54, map(xmin, y).y() - 9, 48, 18), Qt::AlignRight,
-                           QString::number(y, 'g', 4));
-            }
+            drawTicks(p,axes_.back(),grid);
             p.setPen(QColor("#d0deec"));
             p.drawRect(panel);
             p.setPen(QColor("#637b8e"));
@@ -812,6 +807,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         const QRectF source((bounds.xmin/physicalX+.5)*nx,(.5-bounds.ymax/physicalY)*ny,
                             (bounds.xmax-bounds.xmin)/physicalX*nx,(bounds.ymax-bounds.ymin)/physicalY*ny);
         p.drawImage(area, image, source);
+        drawTicks(p,bounds,false);
         for (int i = 0; i < 100; ++i)
             p.fillRect(QRectF(area.right() + 15, area.top() + i * area.height() / 100, 12,
                               area.height() / 100 + 1),
@@ -831,13 +827,14 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         auto map = axes(0, std::max(1., double(d.spots.size() - 1)), 0, limit, "Номер поля зрения",
                         "Полихроматический RMS, мкм");
         QPolygonF line;
-        for (size_t i = 0; i < d.spots.size(); ++i)
-            line << map(i, d.spots[i].rms * 1000);
-        p.setPen(QPen(colors[0], 1.6));
-        p.drawPolyline(line);
+        p.setPen(QPen(colors[0],1.6));
         p.setBrush(colors[0]);
-        for (auto a : line)
-            p.drawEllipse(a, 3, 3);
+        for (size_t i=0; i<d.spots.size(); ++i) {
+            if (!std::isfinite(d.spots[i].rms)) {p.drawPolyline(line); line.clear(); continue;}
+            line << map(i,d.spots[i].rms*1000);
+            p.drawEllipse(line.back(),3,3);
+        }
+        p.drawPolyline(line);
     } else if (view == View::DetectorProfile) {
         if (!d.scene || d.detectorStats.empty()) {
             p.drawText(area, Qt::AlignCenter, "Запустите трассировку для расчёта профилей");
@@ -957,25 +954,13 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         p.restore();
     } else if (view == View::Scene) {
         const auto& scene = d.project.scene;
-        Vec3 center;
-        double count = 0;
-        for (const auto& o : scene.objects) {
-            center = center + o.pose.position;
-            ++count;
-        }
-        for (const auto& s : scene.sources) {
-            center = center + s.pose.position;
-            ++count;
-        }
-        center = center / std::max(1., count);
         double extent = 30;
         for (const auto& o : scene.objects)
-            extent = std::max(extent, (o.pose.position - center).norm() + o.size.norm() / 2);
+            extent = std::max(extent, o.pose.position.norm() + o.size.norm() / 2);
         for (const auto& s : scene.sources)
-            extent = std::max(extent, (s.pose.position - center).norm());
+            extent = std::max(extent, s.pose.position.norm());
         double scale = std::min(area.width(), area.height()) / (2.3 * extent) * zoom;
         auto project = [&](Vec3 v) {
-            v = v - center;
             double a = yaw * deg, b = pitch * deg;
             double x = cos(a) * v.x - sin(a) * v.y, y = sin(a) * v.x + cos(a) * v.y;
             return QPointF(area.center().x() + x * scale,
@@ -984,11 +969,17 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         p.save();
         p.setClipRect(area);
         p.setPen(QPen(QColor("#e3edf5"), 1));
-        if (grid)
-            for (int i = -5; i <= 5; ++i) {
-                p.drawLine(project({i * 10., -50, 0}), project({i * 10., 50, 0}));
-                p.drawLine(project({-50, i * 10., 0}), project({50, i * 10., 0}));
-            }
+        const double gridStep=plotScale::step(extent/(5*zoom));
+        const double edge=6*gridStep;
+        if (grid) for (int i=-6; i<=6; ++i) {
+            const double pos=i*gridStep;
+            p.drawLine(project({pos,-edge,0}),project({pos,edge,0}));
+            p.drawLine(project({-edge,pos,0}),project({edge,pos,0}));
+        }
+        p.setPen(QColor("#637b8e"));
+        p.drawText(project({0,0,0})+QPointF(4,14),"0");
+        p.drawEllipse(project({0,0,0}),2,2);
+        p.drawText(area.bottomLeft()+QPointF(8,-8),QString("Шаг сетки: %1 мм").arg(gridStep));
         for (size_t i = 0; i < scene.objects.size(); ++i) {
             const auto& o = scene.objects[i];
             targets.push_back(project(o.pose.position));
