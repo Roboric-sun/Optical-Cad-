@@ -676,13 +676,27 @@ Window::Window(QWidget* parent)
     debounce_.setSingleShot(true);
     debounce_.setInterval(120);
     connect(&debounce_, &QTimer::timeout, this, [this] { recalculate(); });
+    connect(&analysisWatcher_, &QFutureWatcherBase::finished, this, [this] {
+        analysisRunning_ = false;
+        if (analysisPending_) { recalculate(); return; }
+        if (analysisCancel_->load() || project_.mode != 0 || analysisRevision_ != revision_) return;
+        auto completed = analysisWatcher_.result();
+        completed->scene = std::move(results_->scene);
+        completed->detectorStats = std::move(results_->detectorStats);
+        completed->detector = results_->detector;
+        completed->layoutRays = results_->layoutRays;
+        completed->selected = selected_;
+        results_ = std::move(completed);
+        status_->setText(results_->summary);
+        updatePlots();
+    });
     connect(&watcher_, &QFutureWatcher<SceneTrace>::finished, this, [this] {
         progress_->hide();
         if (auto* trace = findChild<QToolButton*>("traceSceneButton"))
             trace->setText("Трасси-\nровка");
         try {
             auto result = watcher_.result();
-            if (jobRevision_ == revision_) {
+            if (!sceneJobObsolete_ && jobRevision_ == revision_) {
                 results_->scene = std::move(result);
                 results_->detectorStats.clear();
                 for (const auto& dt : results_->scene->detectors) {
@@ -711,7 +725,7 @@ Window::Window(QWidget* parent)
                     rebuildTree();
                 } else
                     recalculate();
-            } else
+            } else if (project_.mode == 1)
                 status_->setText("Сцена изменилась — запустите расчёт заново");
         } catch (const std::exception& e) {
             error(e);
@@ -729,6 +743,8 @@ Window::Window(QWidget* parent)
     QTimer::singleShot(0, this, [this] { fitRibbon(); });
 }
 Window::~Window() {
+    analysisCancel_->store(true);
+    analysisWatcher_.waitForFinished();
     cancel_->store(true);
     optimizationCancel_->store(true);
     watcher_.waitForFinished();
@@ -744,6 +760,7 @@ void Window::checkpoint() {
     redo_.clear();
 }
 void Window::changed(bool rebuild) {
+    analysisCancel_->store(true);
     try { applySolves(project_.system, project_.catalog); }
     catch (const std::exception&) { /* recalculate reports an invalid constraint without stale analyses */ }
     if (!project_.system.solves.empty()) rebuild = true;
@@ -810,6 +827,10 @@ void Window::changeMode(int mode) {
             if (auto* p = dynamic_cast<PlotWidget*>(views_->widget(i)))
                 tabs.append(int(p->view));
         project_.workspace[project_.mode ? "nonsequentialViews" : "sequentialViews"] = tabs;
+    }
+    if (sceneBusy_ && mode != project_.mode) {
+        cancel_->store(true);
+        sceneJobObsolete_ = true;
     }
     project_.mode = mode;
     building_ = true;
@@ -878,8 +899,12 @@ void Window::buildRibbon() {
     ribbon_->setProperty("availableWidth", 0);
     if (auto* old = ribbon_->layout()) {
         while (auto* item = old->takeAt(0)) {
-            if (item->widget())
-                delete item->widget();
+            if (auto* retiring = item->widget()) {
+                // A ribbon command can switch modes from inside its own click handler.
+                retiring->hide();
+                retiring->setParent(nullptr);
+                retiring->deleteLater();
+            }
             delete item;
         }
         delete old;
@@ -1792,10 +1817,13 @@ void Window::updatePlots() {
         const auto& dt = results_->scene->detectors[std::min(
             size_t(results_->detector), results_->scene->detectors.size() - 1)];
         detectorDock_->setWindowTitle("Карта облучённости — " +
-                                      str(project_.scene.objects[dt.objectIndex].name));
+                                      str(results_->project.scene.objects.at(dt.objectIndex).name));
     }
 }
 void Window::recalculate() {
+    debounce_.stop();
+    analysisCancel_->store(true);
+    analysisPending_ = false;
     auto previous = results_;
     results_ = std::make_shared<Results>();
     results_->project = project_;
@@ -1808,67 +1836,16 @@ void Window::recalculate() {
         results_->detectorStats = previous->detectorStats;
     }
     if (project_.mode == 0) {
-        auto errors = project_.system.validate(project_.catalog);
-        if (!errors.empty())
-            results_->error = "Исправьте данные: " + str(errors.front());
-        else
-            try {
-                for (auto f : project_.system.fields)
-                    results_->spots.push_back(spot(project_.system, project_.catalog, f));
-                auto f = project_.system.fields.at(field_);
-                try {
-                    results_->fan = rayFan(project_.system, project_.catalog, f);
-                } catch (const std::exception& e) {
-                    results_->fanError = str(e.what());
-                }
-                try {
-                    results_->wave = wavefront(project_.system, project_.catalog, f);
-                } catch (const std::exception& e) { results_->waveError = str(e.what()); }
-                try {
-                    results_->diffraction = project_.workspace["polychromaticDiffraction"].toBool(false)
-                        ? polychromaticDiffraction(project_.system, project_.catalog, f)
-                        : diffraction(project_.system, project_.catalog, f);
-                } catch (const std::exception& e) {
-                    results_->diffractionError = str(e.what());
-                }
-                try {results_->curves[0] = longitudinalAberration(project_.system, project_.catalog);} catch (...) {}
-                try { results_->curves[1] = fieldCurvature(project_.system, project_.catalog); } catch (...) {}
-                try {
-                    results_->curves[2] = chromaticFocus(project_.system, project_.catalog);
-                } catch (...) {
-                }
-                results_->curves[3] = geometricMTF(results_->spots[field_]);
-                QString focus;
-                try {
-                    auto p = paraxial(project_.system, project_.catalog,
-                                      project_.system.wavelengths[project_.system.primary].um);
-                    focus =
-                        QString("EFL %1 мм · f/%2").arg(p.efl, 0, 'f', 3).arg(p.fNumber, 0, 'f', 2);
-                } catch (...) {
-                    try {focus=differentialFirstOrder(project_.system,project_.catalog,project_.system.wavelengths[project_.system.primary].um).afocal ? "Афокальная система · первый порядок 4×4" : "Локальная система · первый порядок 4×4";}
-                    catch(...) {focus="Параксиальный расчёт неприменим";}
-                }
-                if (results_->spots[field_].samples.empty())
-                    focus += " · Все лучи отсечены";
-                const auto clear = clearSemiDiameters(resolvedSystem(project_.system,project_.catalog));
-                int trimmed = 0;
-                for(size_t i=0;i<clear.size();++i)
-                    if(clear[i] < project_.system.surfaces[i].semiDiameter-1e-8) ++trimmed;
-                if(trimmed) {
-                    results_->geometryWarning=QString("Края поверхностей обрезаны: %1. Расчёт продолжается; внешние лучи отсекаются.").arg(trimmed);
-                    focus += " · Обрезка краёв: " + QString::number(trimmed);
-                }
-                status_->setText(QString("Режим: последовательный    %1    Полей: %2    Волн: %3   "
-                                         " RMS: %4 мкм    Готово")
-                                     .arg(focus)
-                                     .arg(project_.system.fields.size())
-                                     .arg(project_.system.wavelengths.size())
-                                     .arg(results_->spots[field_].rms * 1000, 0, 'f', 3));
-            } catch (const std::exception& e) {
-                results_->error = str(e.what());
-            }
-        if (!results_->error.isEmpty())
-            status_->setText(results_->error);
+        results_->error = "Идёт расчёт…";
+        status_->setText(results_->error);
+        if (analysisRunning_) {
+            analysisPending_ = true;
+        } else {
+            analysisRunning_ = true;
+            analysisCancel_ = std::make_shared<std::atomic<bool>>(false);
+            analysisRevision_ = revision_;
+            analysisWatcher_.setFuture(QtConcurrent::run(sequentialAnalysis, project_, field_, analysisCancel_));
+        }
     } else if (!sceneBusy_)
         status_->setText(
             QString(
@@ -2414,17 +2391,17 @@ void Window::parameters() {
             candidate.pupilDiameter = apertureDiameter(candidate, project_.catalog,
                 ApertureType(type->currentIndex()), aperture->value());
             applySolves(candidate, project_.catalog);
-            auto errors = candidate.validate(project_.catalog);
-            if (!errors.empty())
-                throw std::invalid_argument(errors.front());
-            checkpoint();
-            project_.system = candidate;
-            if (project_.optimization) {
-                std::erase_if(project_.optimization->operands, [&](auto o) {
-                    return o.field >= 0 && size_t(o.field) >= candidate.fields.size();
+            auto edited = project_;
+            edited.system = std::move(candidate);
+            if (edited.optimization) {
+                std::erase_if(edited.optimization->operands, [&](auto o) {
+                    return o.field >= 0 && size_t(o.field) >= edited.system.fields.size();
                 });
-                if (project_.optimization->operands.empty()) project_.optimization.reset();
+                if (edited.optimization->operands.empty()) edited.optimization.reset();
             }
+            validateProject(edited);
+            checkpoint();
+            project_ = std::move(edited);
             field_ = 0;
             changed();
             dialog.accept();
@@ -2478,9 +2455,13 @@ void Window::catalog() {
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setRowCount(project_.catalog.materials.size());
     int r = 0;
-    for (auto m : project_.catalog.materials) {
-        QStringList values = {str(m.name), num(m.index(.5875618)), num(m.vd),
-                              num(m.index(.4861327)), num(m.index(.6562725))};
+    for (const auto& m : project_.catalog.materials) {
+        auto indexAt = [&](double wavelength) -> QString {
+            try { return num(m.index(wavelength)); }
+            catch (const std::exception&) { return QStringLiteral("—"); }
+        };
+        QStringList values = {str(m.name), indexAt(.5875618), num(m.vd),
+                              indexAt(.4861327), indexAt(.6562725)};
         for (int c = 0; c < 5; ++c)
             table->setItem(r, c, new QTableWidgetItem(values[c]));
         ++r;
@@ -2575,6 +2556,7 @@ void Window::runScene() {
     auto cancel = cancel_;
     auto scene = project_.scene;
     auto catalog = project_.catalog;
+    sceneJobObsolete_ = false;
     jobRevision_ = revision_;
     sceneBusy_ = true;
     progress_->setRange(0, 0);
@@ -2726,20 +2708,26 @@ void Window::exportCSV() {
     auto* plot = dynamic_cast<PlotWidget*>(views_->currentWidget());
     if (!plot)
         return;
+    if (!project_.mode && analyzing()) {
+        status_->setText("Дождитесь завершения расчёта для экспорта");
+        return;
+    }
+    const auto view=plot->view;
+    const auto snapshot=results_;
     auto path =
-        QFileDialog::getSaveFileName(this, "Выгрузить " + viewName(plot->view), {}, "CSV (*.csv)");
+        QFileDialog::getSaveFileName(this, "Выгрузить " + viewName(view), {}, "CSV (*.csv)");
     if (path.isEmpty())
         return;
     if (!path.endsWith(".csv", Qt::CaseInsensitive))
         path += ".csv";
     QByteArray csv;
     auto line = [&](QString value) { csv += value.toUtf8() + "\n"; };
-    auto& d = *results_;
-    if (plot->view == View::Detector) {
+    const auto& d = *snapshot;
+    if (view == View::Detector) {
         if (!d.scene || d.scene->detectors.empty())
             return;
         auto& dt = d.scene->detectors.at(d.detector);
-        auto& object = project_.scene.objects[dt.objectIndex];
+        auto& object = d.project.scene.objects[dt.objectIndex];
         line("x_mm,y_mm,power_W,irradiance_W_per_mm2");
         for (int y = 0; y < dt.ny; ++y)
             for (int x = 0; x < dt.nx; ++x) {
@@ -2750,10 +2738,10 @@ void Window::exportCSV() {
                          .arg(watts, 0, 'g', 14)
                          .arg(watts / dt.cellArea, 0, 'g', 14));
             }
-    } else if (plot->view == View::DetectorProfile) {
+    } else if (view == View::DetectorProfile) {
         if (!d.scene || d.detectorStats.empty()) return;
         csv = detectorProfileCSV(d.detectorStats.at(d.detector));
-    } else if (plot->view == View::Scene) {
+    } else if (view == View::Scene) {
         if (!d.scene)
             return;
         line("ray,segment,x_mm,y_mm,z_mm,source_index,wavelength_um,incoming_segment_kind");
@@ -2778,11 +2766,11 @@ void Window::exportCSV() {
                          .arg(p.z, 0, 'g', 14)
                          .arg(source, wavelength, kind));
             }
-    } else if (plot->view == View::Fan) {
+    } else if (view == View::Fan) {
         if (!d.fanError.isEmpty())
             return;
         csv = rayFanCSV(d.fan);
-    } else if (plot->view == View::OPD || plot->view == View::Wavefront) {
+    } else if (view == View::OPD || view == View::Wavefront) {
         line("pupil_x,pupil_y,OPD_mm,OPD_waves");
         for (auto p : d.wave.samples)
             line(QString("%1,%2,%3,%4")
@@ -2790,14 +2778,14 @@ void Window::exportCSV() {
                      .arg(p.py, 0, 'g', 14)
                      .arg(p.opd, 0, 'g', 14)
                      .arg(p.opd * 1000 / d.wave.wavelength, 0, 'g', 14));
-    } else if (plot->view == View::MTF) {
+    } else if (view == View::MTF) {
         line("frequency_lp_per_mm,MTF_X,MTF_Y");
         for (size_t i = 0; i < d.diffraction.frequency.size(); ++i)
             line(QString("%1,%2,%3")
                      .arg(d.diffraction.frequency[i], 0, 'g', 14)
                      .arg(d.diffraction.mtfX[i], 0, 'g', 14)
                      .arg(d.diffraction.mtfY[i], 0, 'g', 14));
-    } else if (plot->view == View::PSF) {
+    } else if (view == View::PSF) {
         line("x_um,y_um,normalized_energy");
         int n = d.diffraction.size;
         for (int y = 0; y < n; ++y)
@@ -2806,10 +2794,10 @@ void Window::exportCSV() {
                          .arg((x - n / 2) * d.diffraction.pixelUm, 0, 'g', 14)
                          .arg((y - n / 2) * d.diffraction.pixelUm, 0, 'g', 14)
                          .arg(d.diffraction.psf[y * n + x], 0, 'g', 14));
-    } else if (int(plot->view) >= 10 && int(plot->view) <= 13) {
-        auto& curve = d.curves[int(plot->view) - 10];
-        QString header = plot->view == View::FieldCurvature ?
-            (project_.system.fieldType == FieldType::Angle ? "field_deg" : "field_mm") : "x";
+    } else if (int(view) >= 10 && int(view) <= 13) {
+        auto& curve = d.curves[int(view) - 10];
+        QString header = view == View::FieldCurvature ?
+            (d.project.system.fieldType == FieldType::Angle ? "field_deg" : "field_mm") : "x";
         for (size_t j = 0; j < curve.y.size(); ++j)
             header += ",series_" + QString::number(j + 1);
         line(header);
@@ -2819,24 +2807,24 @@ void Window::exportCSV() {
                 row += "," + QString::number(series[i], 'g', 14);
             line(row);
         }
-    } else if (plot->view == View::RMS) {
-        line(project_.system.fieldType == FieldType::Angle ? "field,x_deg,y_deg,RMS_um,valid_rays,launched_rays" : "field,x_mm,y_mm,RMS_um,valid_rays,launched_rays");
+    } else if (view == View::RMS) {
+        line(d.project.system.fieldType == FieldType::Angle ? "field,x_deg,y_deg,RMS_um,valid_rays,launched_rays" : "field,x_mm,y_mm,RMS_um,valid_rays,launched_rays");
         for (size_t i = 0; i < d.spots.size(); ++i)
             line(QString("%1,%2,%3,%4,%5,%6")
                      .arg(i + 1)
-                     .arg(project_.system.fields[i].x)
-                     .arg(project_.system.fields[i].y)
+                     .arg(d.project.system.fields[i].x)
+                     .arg(d.project.system.fields[i].y)
                      .arg(d.spots[i].rms * 1000, 0, 'g', 14)
                      .arg(d.spots[i].samples.size())
                      .arg(d.spots[i].launched));
-    } else if (plot->view == View::Layout) {
+    } else if (view == View::Layout) {
         line("field,ray,segment,x_mm,y_mm,z_mm");
-        for (size_t f = 0; f < project_.system.fields.size(); ++f)
+        for (size_t f = 0; f < d.project.system.fields.size(); ++f)
             for (int r = -5; r <= 5; ++r) {
                 auto t = trace(
-                    project_.system, project_.catalog,
-                    pupilRay(project_.system, project_.catalog, project_.system.fields[f],
-                             project_.system.wavelengths[project_.system.primary].um, 0, r / 5.));
+                    d.project.system, d.project.catalog,
+                    pupilRay(d.project.system, d.project.catalog, d.project.system.fields[f],
+                             d.project.system.wavelengths[d.project.system.primary].um, 0, r / 5.));
                 for (size_t i = 0; i < t.points.size(); ++i) {
                     auto p = t.points[i];
                     line(QString("%1,%2,%3,%4,%5,%6")
@@ -2852,7 +2840,7 @@ void Window::exportCSV() {
         if (d.spots.empty())
             return;
         line("pupil_x,pupil_y,wavelength_um,image_x_mm,image_y_mm,power_weight");
-        for (auto p : d.spots.at(field_).samples)
+        for (auto p : d.spots.at(d.field).samples)
             line(QString("%1,%2,%3,%4,%5,%6")
                      .arg(p.px)
                      .arg(p.py)
@@ -2889,12 +2877,6 @@ void Window::save(bool as) {
     if (!path.endsWith(".optcad", Qt::CaseInsensitive))
         path += ".optcad";
     try {
-        auto errors = project_.system.validate(project_.catalog),
-             sceneErrors = project_.scene.validate(project_.catalog);
-        if (!errors.empty())
-            throw std::invalid_argument(errors.front());
-        if (!sceneErrors.empty())
-            throw std::invalid_argument(sceneErrors.front());
         project_.workspace["docks"] = QString::fromLatin1(saveState().toBase64());
         QJsonArray tabs;
         for (int i = 0; i < views_->count(); ++i)
@@ -3081,8 +3063,8 @@ static void reportDialog(QWidget* parent, QString title, QString text) {
             return;
         QSaveFile f(path);
         auto bytes = text.toUtf8();
-        if (f.open(QIODevice::WriteOnly) && f.write(bytes) == bytes.size())
-            f.commit();
+        if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit())
+            QMessageBox::warning(&dialog, "Отчёт не сохранён", path + ": " + f.errorString());
     });
     dialog.exec();
 }

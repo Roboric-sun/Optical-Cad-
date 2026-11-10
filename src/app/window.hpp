@@ -34,6 +34,7 @@ class Window : public QMainWindow {
     bool calculating() const {
         return sceneBusy_;
     }
+    bool analyzing() const { return project_.mode == 0 && (analysisRunning_ || debounce_.isActive()); }
     bool optimizing() const { return optimizationBusy_; }
     void writeExamples(const QString& directory);
 
@@ -60,7 +61,11 @@ class Window : public QMainWindow {
     QSpinBox* layoutRays_;
     QSet<int> hidden_;
     bool uiReady_ = false;
-    bool sceneBusy_ = false;
+    bool sceneBusy_ = false, sceneJobObsolete_ = false;
+    bool analysisRunning_ = false, analysisPending_ = false;
+    size_t analysisRevision_ = 0;
+    QFutureWatcher<std::shared_ptr<Results>> analysisWatcher_;
+    std::shared_ptr<std::atomic<bool>> analysisCancel_ = std::make_shared<std::atomic<bool>>(false);
     bool optimizationBusy_ = false;
     bool advancedSurfaces_ = false;
     QComboBox *fieldBox_, *detectorBox_;

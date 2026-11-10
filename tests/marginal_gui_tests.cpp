@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "solve_editor.hpp"
 #include "window.hpp"
 #include <QAction>
@@ -91,7 +92,7 @@ size_t marginalGUIChecks(Window& w, const QString& dir) {
     w.findChild<QAction*>("redoAction")->trigger(); QTest::qWait(200);
     close(w.project().system.surfaces[1].thickness,changed,"Redo restores the updated ray condition");
     w.recalculate(); QApplication::processEvents();
-    check(w.results() && w.results()->error.isEmpty() && !w.results()->spots.empty(),"All standard analyses calculate with the new solve");
+    check(readyResults(w) && readyResults(w)->error.isEmpty() && !readyResults(w)->spots.empty(),"All standard analyses calculate with the new solve");
     if(!dir.isEmpty()) w.grab().save(dir+"/marginal_project.png");
     // Exercise the actual context menu, including removal through the fixed-value choice.
     bool menuFound=false, dialogFound=false;

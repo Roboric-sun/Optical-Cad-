@@ -101,6 +101,61 @@ std::optional<SurfaceHit> intersectToroidal(const Surface& s,const RigidFrame& p
     }
     return {};
 }
+// Work on |u| <= 1, then solve the reversed polynomial for u = 1/t.
+// Thus a vanishing cubic term cannot stretch the bracket of a nearby root.
+static std::vector<double> quadratic(double a, double b, double c) {
+    if (a == 0) return b == 0 ? std::vector<double>{} : std::vector<double>{-c / b};
+    const double scale = std::max({std::abs(a), std::abs(b), std::abs(c)});
+    a /= scale; b /= scale; c /= scale;
+    const double ac = 4 * a * c;
+    const double disc = std::fma(b, b, -ac);
+    if (disc < 0) return {};
+    const double q = -.5 * (b + std::copysign(std::sqrt(disc), b));
+    if (q == 0) return {0};
+    return {q / a, c / q};
+}
+
+static void unitCubicRoots(const Polynomial& p, bool reciprocal, std::vector<double>& out) {
+    std::vector<double> cuts{-1, 0, 1};
+    for (double x : quadratic(3*p[3], 2*p[2], p[1]))
+        if (x > -1 && x < 1) cuts.push_back(x);
+    std::sort(cuts.begin(), cuts.end());
+    auto add = [&](double x) {
+        if (reciprocal && x == 0) return;
+        const double t = reciprocal ? 1/x : x;
+        if (std::isfinite(t)) out.push_back(t);
+    };
+    for (double x : cuts) {
+        // A tangent root has no sign change; compare against roundoff in Horner evaluation.
+        const double ax = std::abs(x);
+        const double scale = ((std::abs(p[3])*ax + std::abs(p[2]))*ax + std::abs(p[1]))*ax + std::abs(p[0]);
+        if (std::abs(value(p,x)) <= 8*std::numeric_limits<double>::epsilon()*scale) add(x);
+    }
+    for (size_t i=1; i<cuts.size(); ++i) {
+        double lo=cuts[i-1], hi=cuts[i], left=value(p,lo), right=value(p,hi);
+        if (left == 0 || right == 0 || std::signbit(left) == std::signbit(right)) continue;
+        for (;;) {
+            const double mid = lo + (hi-lo)*.5;
+            if (mid == lo || mid == hi) { add(mid); break; }
+            const double y = value(p,mid);
+            if (y == 0) { add(mid); break; }
+            if (std::signbit(y) == std::signbit(left)) lo=mid; else hi=mid;
+        }
+    }
+}
+
+static std::vector<double> xyRoots(Polynomial p) {
+    std::vector<double> result;
+    if (p[3] == 0) result = quadratic(p[2],p[1],p[0]);
+    else {
+        unitCubicRoots(p, false, result);
+        std::reverse(p.begin(), p.end());
+        unitCubicRoots(p, true, result);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 std::optional<SurfaceHit> intersectXYPolynomial(const Surface& s,const RigidFrame& pose,const Ray& ray,bool aperture){
     const auto origin=pose.local(ray.origin),d=pose.inverseRotate(ray.direction);if(!finite(origin)||!finite(d)||d.norm2()<1e-20)return {};
     const double offset=std::abs(d.z)>1e-10?-origin.z/d.z:-origin.dot(d)/d.norm2();const auto o=origin+d*offset;
@@ -108,8 +163,9 @@ std::optional<SurfaceHit> intersectXYPolynomial(const Surface& s,const RigidFram
     for(size_t k=0;k<powers.size();++k){Polynomial term{1};auto multiply=[&](double a,double b){Polynomial next(term.size()+1);for(size_t i=0;i<term.size();++i){next[i]+=a*term[i];next[i+1]+=b*term[i];}term=next;};
         for(int i=0;i<powers[k].first;++i)multiply(o.x,d.x);for(int i=0;i<powers[k].second;++i)multiply(o.y,d.y);for(size_t i=0;i<term.size();++i)p[i]-=s.xySag[k]*term[i];}
     if(!std::all_of(p.begin(),p.end(),[](double a){return std::isfinite(a);}))return {};
-    for(double u:roots(p)){double t=offset+u;if(t<-1e-7||!std::isfinite(t))continue;const auto point=origin+d*t;
-        if(std::abs(point.z-shapedSag(s,point.x,point.y))>1e-7||(aperture&&!insideSurfaceAperture(s,point.x,point.y)))continue;
+    for(double u:xyRoots(p)){double t=offset+u;if(t<-1e-7||!std::isfinite(t))continue;const auto point=origin+d*t;
+        const double z=shapedSag(s,point.x,point.y);
+        if(!finite(point)||!std::isfinite(z)||std::abs(point.z-z)>1e-7||(aperture&&!insideSurfaceAperture(s,point.x,point.y)))continue;
         return SurfaceHit{pose.world(point),pose.rotate(shapedNormal(s,point.x,point.y)),std::max(0.,t)};}
     return {};
 }

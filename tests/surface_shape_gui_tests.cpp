@@ -1,3 +1,4 @@
+#include "ready_results.hpp"
 #include "window.hpp"
 #include "automation.hpp"
 #include <QAction>
@@ -45,9 +46,9 @@ size_t surfaceShapeGUIChecks(Window& w,const QString& dir){
  for(const auto& project:{cylindricalLensProject(),torus,obscuredApertureProject()}){
   check(project.system.validate(project.catalog).empty(),"New demonstration validates with actual material catalog");
   saveProject(temp.path()+"/shape.optcad",project);check(serializeProject(loadProject(temp.path()+"/shape.optcad"))==serializeProject(project),"New shape project actually saves and reopens from disk");
-  w.setProject(project);w.recalculate();check(w.results()->error.isEmpty()&&!w.results()->spots[0].samples.empty(),"New profiles and obscuration have working geometric spots");
-  check(!w.results()->waveError.isEmpty()&&!w.results()->diffractionError.isEmpty(),"Unvalidated new wave/diffraction models have explicit diagnostics");
-  PlotWidget plot(View::Layout);plot.resize(1050,600);plot.setData(w.results());plot.layoutProjection=2;plot.show();QTest::qWait(30);check(!plot.axisViews().empty(),"Aperture XY layout produces real axes");
+  w.setProject(project);w.recalculate();check(readyResults(w)->error.isEmpty()&&!readyResults(w)->spots[0].samples.empty(),"New profiles and obscuration have working geometric spots");
+  check(!readyResults(w)->waveError.isEmpty()&&!readyResults(w)->diffractionError.isEmpty(),"Unvalidated new wave/diffraction models have explicit diagnostics");
+  PlotWidget plot(View::Layout);plot.resize(1050,600);plot.setData(readyResults(w));plot.layoutProjection=2;plot.show();QTest::qWait(30);check(!plot.axisViews().empty(),"Aperture XY layout produces real axes");
   if(!dir.isEmpty())plot.grab().save(dir+QString("/shape_%1.png").arg(int(project.system.surfaces[0].profile)));
   const auto request=QJsonDocument::fromJson(serializeProject(project)).object();const auto api=executeRequest({{"operation","analyze"},{"project",request},{"options",QJsonObject{{"pupil_grid",9}}}});
   near(api["fields"].toArray()[0].toObject()["rms_mm"].toDouble(),spot(project.system,project.catalog,project.system.fields[0],9).rms,1e-10,"Batch geometry agrees with core for new shapes");

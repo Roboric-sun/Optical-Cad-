@@ -1,4 +1,5 @@
 #include "optics/model.hpp"
+#include "prepared_trace.hpp"
 #include <limits>
 
 namespace optics {
@@ -243,25 +244,28 @@ std::optional<SurfaceHit> intersectSurface(const Surface& s,const Pose& pose,con
 }
 RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool toImage,
                size_t through, bool aperture) {
-    if (!sys.solves.empty()) {
-        try { return trace(resolvedSystem(sys, cat), cat, ray, toImage, through, aperture); }
-        catch (const std::exception&) {
-            RayTrace failed;
-            failed.points.push_back(ray.origin);
-            return failed;
-        }
+    try {
+        if (!sys.solves.empty()) return trace(resolvedSystem(sys,cat),cat,ray,toImage,through,aperture);
+        return PreparedTrace(sys,cat,aperture).trace(ray,toImage,through,aperture);
+    } catch (const std::exception&) {
+        RayTrace failed;
+        failed.points.push_back(ray.origin);
+        return failed;
     }
+}
+
+RayTrace PreparedTrace::trace(Ray ray, bool toImage, size_t through, bool aperture) const {
+    const auto& sys = system;
+    const auto& cat = catalog;
     RayTrace out;
     out.points.push_back(ray.origin);
     out.power = ray.power;
     double n = 1;
-    const auto clear = aperture ? clearSemiDiameters(sys) : std::vector<double>{};
     try {
         if (!finite(ray.origin) || !finite(ray.direction) || !std::isfinite(ray.power) || ray.power < 0 ||
             !std::isfinite(ray.wavelength) || ray.wavelength < .2 || ray.wavelength > 5 || sys.surfaces.empty())
             throw std::invalid_argument("Invalid ray");
         ray.direction = ray.direction.unit();
-        const auto frames=sequentialFrames(sys);
         for (size_t i = 0; i < sys.surfaces.size() && i <= through; ++i) {
             auto& s = sys.surfaces[i];
             const auto& p=frames.surfaces.at(i);
@@ -328,17 +332,21 @@ RayTrace trace(const SequentialSystem& sys, const Catalog& cat, Ray ray, bool to
 }
 Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, double px, double py) {
     if (!s.solves.empty()) return pupilRay(resolvedSystem(s, c), c, f, w, px, py);
+    return PreparedTrace(s,c,false).aim(angularField(s,c,f), w, px, py);
+}
+
+Ray PreparedTrace::aim(Field f, double w, double px, double py) const {
+    const auto& s = system;
+    const auto& c = catalog;
     if (s.stop >= s.surfaces.size() || !std::isfinite(s.pupilDiameter) || s.pupilDiameter <= 0)
         throw std::invalid_argument("Invalid stop or entrance pupil");
-    f = angularField(s, c, f);
     const auto pupil = vignettedPupil(f, px, py);
     px = pupil.x;
     py = pupil.y;
-    auto vertices = s.vertices();
     double start = s.objectDistance > 0 ? -s.objectDistance : -std::max(30.0, s.pupilDiameter * 2);
     Vec3 direction = Vec3{tan(f.x * deg), tan(f.y * deg), 1}.unit();
     double A = 1, B = 0, C = 0, D = 1, n = 1;
-    bool centered = !usesPhysicalStop(s);
+    bool centered = !physicalStop;
     for (size_t i = 0; centered && i < s.stop; ++i) {
         auto& a = s.surfaces[i];
         if (a.kind == SurfaceKind::Mirror || a.tilt.norm2() > 0 || a.decenter.norm2() > 0) {
@@ -361,14 +369,13 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
         throw std::invalid_argument("Stop is at a pupil singularity");
     double physicalRadius = s.pupilDiameter / 2 * magnification;
     double ax = px * physicalRadius, ay = py * physicalRadius;
-    const auto frames=sequentialFrames(s);
-    const bool localCoordinates=hasCoordinates(s);
+    const bool localCoordinates=local;
     if(localCoordinates && s.objectDistance==0) {
-        const auto& frame=frames.surfaces.front();const double r=clearSemiDiameters(s).front();
+        const auto& frame=frames.surfaces.front();const double r=clear.front();
         const double margin=r*(std::abs(frame.basis[0].z)+std::abs(frame.basis[1].z))+std::abs(sag(s.surfaces.front(),r,0)*frame.basis[2].z);
         start=std::min(start,frame.position.z-margin-1);
     }
-    const double stopZ = localCoordinates?0:vertices.at(s.stop) + s.surfaces.at(s.stop).decenter.z;
+    const double stopZ = localCoordinates?0:frames.surfaces.at(s.stop).position.z;
     auto make = [&](double x, double y) {
         Vec3 target{x, y, stopZ};
         Ray ray;
@@ -386,15 +393,15 @@ Ray pupilRay(const SequentialSystem& s, const Catalog& c, Field f, double w, dou
     const auto& stopPose=frames.surfaces.at(s.stop);
     if(localCoordinates){const auto target=stopPose.world({px*physicalRadius,py*physicalRadius,0});ax=target.x;ay=target.y;}
     auto residual = [&](double x, double y) -> std::optional<Vec3> {
-        auto t = trace(s, c, make(x, y), false, s.stop, false);
+        auto t = trace(make(x, y), false, s.stop, false);
         if (t.status != TraceStatus::Complete)
             return {};
         return stopPose.local(t.exitPoint) - Vec3{px * physicalRadius, py * physicalRadius, 0};
     };
     for (int i = 0; i < 30; ++i) {
         auto e = residual(ax, ay);
-        if (!e || std::hypot(e->x, e->y) < 1e-8)
-            break;
+        if (!e) break;
+        if (std::hypot(e->x, e->y) < 1e-8) return make(ax,ay);
         double h = 1e-4;
         auto ex = residual(ax + h, ay), ey = residual(ax, ay + h);
         if (!ex || !ey)

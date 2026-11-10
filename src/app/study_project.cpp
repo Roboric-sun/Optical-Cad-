@@ -30,7 +30,7 @@ void writeStudies(QJsonObject& root,const Project& p){
         root["version"]=std::max(root["version"].toInt(),12);
     }
 }
-void readStudies(const QJsonObject& root,Project& p,bool validate){
+void readStudies(const QJsonObject& root,Project& p){
     if(root.contains("configurations")){
         if(root["version"].toInt()<11)throw std::invalid_argument("Конфигурации требуют формат 11");
         for(const auto& record:array(root,"configurations",32)){auto c=object(record);Configuration config;
@@ -48,7 +48,6 @@ void readStudies(const QJsonObject& root,Project& p,bool validate){
         t.samples=integer(j,"samples",10000);t.compensationIterations=integer(j,"compensationIterations",50);t.limit=number(j,"limit");
         bool ok=false;if(j["seed"].isString())t.seed=j["seed"].toString().toULongLong(&ok);if(!ok)throw std::invalid_argument("Некорректный seed допусков");p.tolerance=t;
     }
-    if(validate){const OpticalDesign base{p.system,p.catalog};auto errors=validateConfigurations(base,p.configurations);if(!errors.empty())throw std::invalid_argument(errors.front());if(p.tolerance){errors=p.tolerance->validate(base,p.configurations);if(!errors.empty())throw std::invalid_argument(errors.front());}}
 }
 void reindexStudies(Project& p,const std::vector<size_t>& map){
     auto removed=[&](DesignTarget t){return surfaceTarget(t)&&(t.index>=map.size()||map[t.index]==SIZE_MAX);};
