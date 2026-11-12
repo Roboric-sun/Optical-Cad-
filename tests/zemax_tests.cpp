@@ -21,8 +21,13 @@ int main(int argc,char** argv) {
     try {
         QFile input(QString::fromUtf8(OPTICS_SOURCE_DIR)+"/examples/zemax/singlet.zmx");
         check(input.open(QIODevice::ReadOnly),"fixture opens");
-        const auto bytes=input.readAll();
+        // Git checkout may use CRLF on Windows. Keep text mutations below
+        // independent of checkout line endings and exercise CRLF explicitly.
+        auto bytes=input.readAll();
+        bytes.replace("\r\n","\n");
         const auto imported=importZemax(bytes);
+        auto crlf=bytes;crlf.replace("\n","\r\n");
+        check(serializeProject(importZemax(crlf))==serializeProject(imported),"CRLF and LF prescriptions import identically");
         const auto& s=imported.system;
         check(s.surfaces.size()==2 && s.stop==0,"object/image removed and STOP mapped");
         check(s.wavelengths.size()==3 && s.primary==1,"inactive padded WAVM slot excluded despite positive weight");
