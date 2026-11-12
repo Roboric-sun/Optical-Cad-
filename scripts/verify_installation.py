@@ -127,6 +127,19 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
             free=Project.load(package/"examples/xy_freeform.optcad",executable=batch)
             if not free.analyze(pupil_grid=9)["fields"][0]["survived"]:raise RuntimeError("Freeform has no geometric rays")
             result["batch_studies"]=True
+            zemax_source = package / "examples/zemax/singlet.zmx"
+            zemax = Project.import_zemax(zemax_source, executable=batch)
+            if len(zemax.system["surfaces"]) != 2 or zemax.analyze(pupil_grid=9)["efl_mm"] <= 0:
+                raise RuntimeError("Packaged Zemax import failed")
+            native_zemax = base / "zemax-cli.optcad"
+            subprocess.run([str(executable), "--import-zemax", str(zemax_source),
+                            "--save-project", str(native_zemax)],
+                           env=environment, cwd=base, check=True, timeout=60)
+            if Project.load(native_zemax, executable=batch).data != zemax.data:
+                raise RuntimeError("Installed CLI Zemax import did not preserve the project")
+            if not (package / "docs/ZEMAX_13_RU.md").is_file():
+                raise RuntimeError("Zemax import guide missing from package")
+            result["batch_zemax"] = True
         except subprocess.TimeoutExpired as error:
             def decoded(value):
                 return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
@@ -141,4 +154,4 @@ with tempfile.TemporaryDirectory(prefix="opticalcad-installation-") as temporary
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if not result.get("ok"):
         raise RuntimeError(result)
-    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 21 examples, shapes/apertures, local coordinates, DLS and spectral diffraction")
+    print(f"Installation accepted on {sys.platform}: GUI editing, undo/redo, save/reopen, Python and descendant cancellation; 21 examples, shapes/apertures, local coordinates, DLS, spectral diffraction and Zemax import")

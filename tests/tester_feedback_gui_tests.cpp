@@ -129,6 +129,25 @@ size_t testerFeedbackGUIChecks(Window& w,const QString& dir) {
     const QString imported=temporary.filePath("imported.optcad");selectFile(imported);w.findChild<QAction*>("saveAction")->trigger();
     check(QFile::exists(imported),"Saving imported JSON asks for a new native path");
     check(input.open(QIODevice::ReadOnly),"Original Geopter JSON remains accessible");check(input.readAll()==before,"Saving an import never overwrites original Geopter JSON");input.close();
+    const QString zmx=QString(OPTICS_SOURCE_DIR)+"/examples/zemax/singlet.zmx";
+    auto* zemaxAction=w.findChild<QAction*>("importZemaxAction");check(zemaxAction!=nullptr,"Zemax import is available from the File menu");
+    selectFile(zmx);zemaxAction->trigger();
+    check(w.project().system.surfaces.size()==2 && w.project().system.surfaces.front().radius==50,"Actual Zemax menu action imports the optical prescription");
+    const QString zemaxNative=temporary.filePath("zemax-import.optcad");
+    selectFile(zemaxNative);w.findChild<QAction*>("saveAction")->trigger();
+    check(QFile::exists(zemaxNative) && loadProject(zemaxNative).system.surfaces.size()==2,"Saving a Zemax import asks for a native path and produces a valid project");
+    selectFile(zmx);w.findChild<QAction*>("openAction")->trigger();
+    check(w.project().workspace["importNotes"].toString().startsWith("Zemax ZMX:"),"Ordinary Open also recognizes ZMX files");
+    for(const auto& name:{"Afocal Riflescope.ZMX","Example 1, A singlet eyepiece.ZMX"}) {
+        QFile sample(QString(OPTICS_SOURCE_DIR)+"/tests/data/zemax/"+name);
+        check(sample.open(QIODevice::ReadOnly),"Real Zemax fixture opens");
+        w.setProject(importZemax(sample.readAll()));w.recalculate();
+        const auto result=readyResults(w);
+        check(result->error.isEmpty() && !result->geometryWarning.isEmpty(),"Real Zemax geometry loads with an explicit analysis limitation");
+        check(!result->waveError.isEmpty() && !result->diffractionError.isEmpty(),"Unsupported Zemax wavefront and diffraction cannot appear as valid results");
+        PlotWidget layout(View::Layout);layout.resize(960,600);layout.setData(result);
+        check(!layout.grab().isNull(),"Imported real Zemax geometry renders in the layout");
+    }
     w.setProject(eye);w.recalculate();
     auto wheel=[](PlotWidget& plot,QPointF at){QWheelEvent event(at,plot.mapToGlobal(at.toPoint()),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&plot,&event);plot.grab();};
     for(auto view : {View::Layout,View::Spot,View::Fan,View::OPD,View::Wavefront,View::PSF,View::MTF,View::RMS,View::Longitudinal,View::FieldCurvature,View::ChromaticFocus,View::GeometricMTF}) {

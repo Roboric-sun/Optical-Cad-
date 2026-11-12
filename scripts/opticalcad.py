@@ -48,6 +48,22 @@ class Project:
         project.data = project._request("import_geopter", data=json.loads(Path(path).read_text(encoding="utf-8")))["project"]
         return project
 
+    @classmethod
+    def import_zemax(cls, path, **kwargs):
+        """Import a centered sequential .ZMX prescription; see docs/ZEMAX_13_RU.md."""
+        raw = Path(path).read_bytes()
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+            encoding = "utf-16"
+        elif len(raw) > 1 and raw[1] == 0:
+            encoding = "utf-16-le"
+        elif raw[:1] == b"\x00":
+            encoding = "utf-16-be"
+        else:
+            encoding = "utf-8-sig"
+        project = cls({}, **kwargs)
+        project.data = project._request("import_zemax", data=raw.decode(encoding))["project"]
+        return project
+
     @property
     def system(self):
         return self.data["sequential"]
@@ -58,7 +74,7 @@ class Project:
 
     def _request(self, operation, **options):
         request = {"operation": operation, "project": self.data, "options": options}
-        if operation == "import_geopter":
+        if operation in ("import_geopter", "import_zemax"):
             request["data"] = options["data"]
         process = subprocess.run([self.executable], input=json.dumps(request, allow_nan=False),
                                  text=True, encoding="utf-8", capture_output=True, timeout=self.timeout)
