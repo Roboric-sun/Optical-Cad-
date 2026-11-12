@@ -149,6 +149,20 @@ Window::Window(QWidget* parent)
             error(e);
         }
     });
+    action(file, "Импорт Zemax ZMX…", {}, [this] {
+        if (!mayDiscard()) return;
+        const auto path = QFileDialog::getOpenFileName(this, "Импорт Zemax 13", {}, "Zemax lens (*.zmx *.ZMX)");
+        if (path.isEmpty()) return;
+        try {
+            QFile input(path);
+            if (!input.open(QIODevice::ReadOnly) || input.size() > 32 * 1024 * 1024)
+                throw std::runtime_error("Не удалось прочитать ZMX");
+            auto imported = importZemax(input.readAll(), project_.catalog);
+            setProject(std::move(imported)); path_.clear(); dirty_ = true;
+            status_->setText("Zemax ZMX: схема импортирована. DIAM принят как фиксированный световой полудиаметр. Сохраните в .optcad.");
+            if(!zemaxAnalysisLimitation(project_).isEmpty())status_->setText(zemaxAnalysisLimitation(project_));
+        } catch (const std::exception& e) { error(e); }
+    })->setObjectName("importZemaxAction");
     action(edit, "Отменить", QKeySequence::Undo, [this] { undo(); })->setObjectName("undoAction");
     action(edit, "Повторить", QKeySequence::Redo, [this] { undo(true); })->setObjectName("redoAction");
     auto* analysisMenu = new QMenu("Анализ", this);
@@ -2894,17 +2908,20 @@ void Window::save(bool as) {
 void Window::open() {
     if (!mayDiscard())
         return;
-    auto path = QFileDialog::getOpenFileName(this, "Открыть проект или Geopter JSON", QFileInfo(path_).absolutePath(), "Оптические проекты (*.optcad *.json);;Optical CAD (*.optcad);;Geopter (*.json)");
+    auto path = QFileDialog::getOpenFileName(this, "Открыть проект или оптическую схему", QFileInfo(path_).absolutePath(), "Оптические проекты (*.optcad *.json *.zmx *.ZMX);;Optical CAD (*.optcad);;Geopter (*.json);;Zemax (*.zmx *.ZMX)");
     if (path.isEmpty())
         return;
     try {
         Project p;
-        if (path.endsWith(".json",Qt::CaseInsensitive)) {
-            QFile input(path); if(!input.open(QIODevice::ReadOnly)) throw std::runtime_error("Не удалось открыть файл");
-            p=importGeopter(input.readAll());
+        const bool zemax=path.endsWith(".zmx",Qt::CaseInsensitive);
+        const bool exchange=zemax || path.endsWith(".json",Qt::CaseInsensitive);
+        if (exchange) {
+            QFile input(path); if(!input.open(QIODevice::ReadOnly) || input.size()>32*1024*1024) throw std::runtime_error("Не удалось открыть файл");
+            p=zemax?importZemax(input.readAll(),project_.catalog):importGeopter(input.readAll());
         } else p=loadProject(path);
         setProject(std::move(p));
-        path_ = path.endsWith(".json",Qt::CaseInsensitive) ? QString() : path;
+        path_ = exchange ? QString() : path;
+        if(zemax)dirty_=true;
         setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path).fileName());
     } catch (const std::exception& e) {
         error(e);

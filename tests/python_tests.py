@@ -10,6 +10,19 @@ binary, root = sys.argv[1], Path(sys.argv[2])
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     p = Project.load(root / "examples/singlet.optcad", executable=binary)
+    zemax = Project.import_zemax(root / "examples/zemax/singlet.zmx", executable=binary)
+    assert len(zemax.system["surfaces"]) == 2
+    assert zemax.analyze(pupil_grid=9)["efl_mm"] > 0
+    encoded_zmx = tmp / "кириллица.ZMX"
+    encoded_zmx.write_text((root / "examples/zemax/singlet.zmx").read_text().replace("Front", "Передняя"), encoding="utf-16")
+    assert Project.import_zemax(encoded_zmx, executable=binary).system["surfaces"][0]["name"] == "Передняя"
+    encoded_zmx.write_text("MODE NSC\n", encoding="utf-8")
+    try:
+        Project.import_zemax(encoded_zmx, executable=binary)
+    except OpticalCADError:
+        pass
+    else:
+        raise AssertionError("Unsupported Zemax mode accepted")
     first = p.analyze(pupil_grid=9)
     assert first["efl_mm"] > 0 and first["fields"][0]["survived"] > 0
     p.report(tmp / "first.json", pupil_grid=9)

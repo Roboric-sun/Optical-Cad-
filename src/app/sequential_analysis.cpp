@@ -11,6 +11,14 @@ std::shared_ptr<Results> sequentialAnalysis(Project project, int selectedField,
     const Project& model = result->project;
     const int field = result->field;
     auto errors = model.system.validate(model.catalog);
+    const auto limitation=zemaxAnalysisLimitation(model);
+    if(errors.empty() && !limitation.isEmpty()) {
+        result->spots.resize(model.system.fields.size());
+        for(auto& sp:result->spots)sp.rms=std::numeric_limits<double>::quiet_NaN();
+        result->geometryWarning=result->summary=limitation;
+        result->waveError=result->diffractionError=result->fanError=limitation;
+        return result;
+    }
     if (!errors.empty())
         result->error = "Исправьте данные: " + QString::fromStdString(errors.front());
     else

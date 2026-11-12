@@ -15,6 +15,11 @@ int option(const QJsonObject& o,const char* name,int fallback,int minimum,int ma
 }
 QJsonObject executeRequest(const QJsonObject& request) {
     const auto operation=request["operation"].toString();
+    if(operation=="import_zemax") {
+        if(!request["data"].isString()) throw std::invalid_argument("import_zemax requires ZMX text in data");
+        auto project=importZemax(request["data"].toString().toUtf8());
+        return {{"project",QJsonDocument::fromJson(serializeProject(project)).object()}};
+    }
     if(operation=="import_geopter") {
         auto project=importGeopter(QJsonDocument(request["data"].toObject()).toJson());
         return {{"project",QJsonDocument::fromJson(serializeProject(project)).object()}};
@@ -25,6 +30,9 @@ QJsonObject executeRequest(const QJsonObject& request) {
     if(auto study=executeStudyRequest(project,operation,options))return *study;
     if(options.contains("configuration")){const auto v=options["configuration"];if(!v.isDouble()||v.toDouble()<0||std::floor(v.toDouble())!=v.toDouble()||v.toDouble()>=project.configurations.size())throw std::invalid_argument("Invalid configuration index");project=configurationProject(project,size_t(v.toDouble()));}
     auto& s=project.system;auto& c=project.catalog;
+    const auto zemaxLimitation=zemaxAnalysisLimitation(project);
+    if(!zemaxLimitation.isEmpty() && (operation=="diffraction" || operation=="wavefront" || operation=="autofocus" || operation=="optimize"))
+        throw std::invalid_argument(zemaxLimitation.toStdString());
     QJsonObject result;
     if(operation=="validate") result["valid"]=true;
     else if(operation=="autofocus") {
@@ -56,6 +64,13 @@ QJsonObject executeRequest(const QJsonObject& request) {
             const auto para=paraxial(s,c,s.wavelengths[s.primary].um);
             result={{"efl_mm",para.efl},{"bfl_mm",para.bfl},{"f_number",para.fNumber},{"image_z_mm",s.imageZ(c)}};
         }catch(const std::exception& e){result["paraxial_error"]=QString::fromUtf8(e.what());}
+        if(!zemaxLimitation.isEmpty()) {
+            result["analysis_warning"]=zemaxLimitation;
+            result["import_warnings"]=project.workspace["zemaxImport"].toObject()["warnings"];
+            result["image_z_mm"]=s.imageZ(c);
+            result["fields"]=QJsonArray{};
+            return result;
+        }
         const auto frames=sequentialFrames(s,c);result["image_origin_world_mm"]=vector(frames.image.position);
         result["spot_coordinates"]=hasCoordinates(s)?"local image plane":"world XY";
         QJsonObject indices;
