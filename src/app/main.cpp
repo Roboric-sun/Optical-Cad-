@@ -18,15 +18,16 @@ int main(int argc, char** argv) {
         const int i = args.indexOf("--verify-installation");
         return i + 1 < args.size() ? verifyInstallation(window, args[i + 1]) : 1;
     }
-    if (args.contains("--import-geopter")) {
-        int i = args.indexOf("--import-geopter");
+    if (args.contains("--import-geopter") || args.contains("--import-zemax")) {
+        const bool zemax=args.contains("--import-zemax");
+        int i = args.indexOf(zemax?"--import-zemax":"--import-geopter");
         if (i + 1 >= args.size())
             return 1;
         try {
             QFile f(args[i + 1]);
-            if (!f.open(QIODevice::ReadOnly))
+            if (!f.open(QIODevice::ReadOnly) || f.size()>32*1024*1024)
                 return 1;
-            auto p = importGeopter(f.readAll());
+            auto p = zemax?importZemax(f.readAll()):importGeopter(f.readAll());
             int save = args.indexOf("--save-project");
             if (save >= 0 && save + 1 < args.size()) {
                 saveProject(args[save + 1], p);
@@ -46,7 +47,11 @@ int main(int argc, char** argv) {
     }
     if (args.size() > 1 && !args[1].startsWith("--")) {
         try {
-            window.setProject(loadProject(args[1]));
+            if(args[1].endsWith(".zmx",Qt::CaseInsensitive)) {
+                QFile input(args[1]);
+                if(!input.open(QIODevice::ReadOnly) || input.size()>32*1024*1024) return 1;
+                window.setProject(importZemax(input.readAll()));
+            } else window.setProject(loadProject(args[1]));
         } catch (const std::exception& e) {
             qWarning("%s", e.what());
             return 1;
