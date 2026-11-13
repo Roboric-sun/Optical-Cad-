@@ -10,7 +10,8 @@ int main(int argc, char** argv) {
         if (QString::fromLocal8Bit(argv[i]) == "--verify-installation")
             QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
-    QApplication::setApplicationName("Optical CAD");
+    QApplication::setApplicationName(OPTICS_DEVELOPER_BUILD?"Optical CAD Developer":"Optical CAD");
+    QApplication::setApplicationDisplayName(QApplication::applicationName());
     QApplication::setOrganizationName("OpticalCAD");
     Window window;
     const auto args = app.arguments();

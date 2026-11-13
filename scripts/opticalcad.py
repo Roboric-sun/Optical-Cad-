@@ -13,7 +13,9 @@ import subprocess
 import tempfile
 
 class OpticalCADError(RuntimeError):
-    pass
+    def __init__(self, message, *, analysis_warning=None):
+        super().__init__(message)
+        self.analysis_warning = analysis_warning
 
 def _executable():
     configured = os.environ.get("OPTICALCAD_BATCH")
@@ -83,7 +85,8 @@ class Project:
         except ValueError as error:
             raise OpticalCADError(process.stderr or "Batch process returned invalid JSON") from error
         if process.returncode or not response.get("ok"):
-            raise OpticalCADError(response.get("error", process.stderr))
+            raise OpticalCADError(response.get("error", process.stderr),
+                                 analysis_warning=response.get("analysis_warning"))
         result = response["result"]
         if "project" in result:
             self.data = result["project"]

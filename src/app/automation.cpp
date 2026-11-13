@@ -27,12 +27,18 @@ QJsonObject executeRequest(const QJsonObject& request) {
     if(!request["project"].isObject()) throw std::invalid_argument("Request requires a project object");
     auto project=deserializeProject(QJsonDocument(request["project"].toObject()).toJson());
     const auto options=request["options"].toObject();
-    if(auto study=executeStudyRequest(project,operation,options))return *study;
+    if(auto study=executeStudyRequest(project,operation,options)) {
+        const auto warning=zemaxAnalysisWarning(project);
+        if(!warning.isEmpty()) {
+            (*study)["analysis_warning"]=warning;
+            (*study)["experimental"]=true;
+            (*study)["import_warnings"]=project.workspace["zemaxImport"].toObject()["warnings"];
+        }
+        return *study;
+    }
     if(options.contains("configuration")){const auto v=options["configuration"];if(!v.isDouble()||v.toDouble()<0||std::floor(v.toDouble())!=v.toDouble()||v.toDouble()>=project.configurations.size())throw std::invalid_argument("Invalid configuration index");project=configurationProject(project,size_t(v.toDouble()));}
     auto& s=project.system;auto& c=project.catalog;
-    const auto zemaxLimitation=zemaxAnalysisLimitation(project);
-    if(!zemaxLimitation.isEmpty() && (operation=="diffraction" || operation=="wavefront" || operation=="autofocus" || operation=="optimize"))
-        throw std::invalid_argument(zemaxLimitation.toStdString());
+    const auto zemaxWarning=zemaxAnalysisWarning(project);
     QJsonObject result;
     if(operation=="validate") result["valid"]=true;
     else if(operation=="autofocus") {
@@ -64,13 +70,6 @@ QJsonObject executeRequest(const QJsonObject& request) {
             const auto para=paraxial(s,c,s.wavelengths[s.primary].um);
             result={{"efl_mm",para.efl},{"bfl_mm",para.bfl},{"f_number",para.fNumber},{"image_z_mm",s.imageZ(c)}};
         }catch(const std::exception& e){result["paraxial_error"]=QString::fromUtf8(e.what());}
-        if(!zemaxLimitation.isEmpty()) {
-            result["analysis_warning"]=zemaxLimitation;
-            result["import_warnings"]=project.workspace["zemaxImport"].toObject()["warnings"];
-            result["image_z_mm"]=s.imageZ(c);
-            result["fields"]=QJsonArray{};
-            return result;
-        }
         const auto frames=sequentialFrames(s,c);result["image_origin_world_mm"]=vector(frames.image.position);
         result["spot_coordinates"]=hasCoordinates(s)?"local image plane":"world XY";
         QJsonObject indices;
@@ -173,5 +172,10 @@ QJsonObject executeRequest(const QJsonObject& request) {
     else throw std::invalid_argument("Unknown operation: "+operation.toStdString());
     if(operation=="autofocus"||operation=="optimize")
         result["project"]=QJsonDocument::fromJson(serializeProject(project)).object();
+    if(!zemaxWarning.isEmpty()) {
+        result["analysis_warning"]=zemaxWarning;
+        result["experimental"]=true;
+        result["import_warnings"]=project.workspace["zemaxImport"].toObject()["warnings"];
+    }
     return result;
 }

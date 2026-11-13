@@ -291,11 +291,13 @@ Project importZemax(const QByteArray& bytes, const Catalog& catalog) {
     return p;
 }
 
-QString zemaxAnalysisLimitation(const Project& p) {
+QString zemaxAnalysisWarning(const Project& p) {
     const auto imported=p.workspace["zemaxImport"].toObject();
+    if(imported.isEmpty() && !p.workspace["importNotes"].toString().startsWith("Zemax ZMX:"))return {};
+    const QString warning="ТЕСТОВЫЙ РАСЧЁТ ZEMAX: результаты могут быть неточными. Сравните их с Zemax; расчёты выполняются алгоритмами Optical CAD.";
     if(imported["virtualImage"].toBool())
-        return "Zemax: геометрия виртуального изображения импортирована; обратная проекция и анализы изображения пока не поддержаны.";
+        return warning+" Виртуальное изображение: обратная проекция лучей пока не реализована; возможны отсутствие данных и ошибки расчёта.";
     if(imported["afocalImageSpace"].toBool())
-        return "Zemax: афокальная геометрия импортирована; угловые анализы изображения пока не поддержаны.";
-    return {};
+        return warning+" Афокальная система: значения в мм не эквивалентны угловым характеристикам Zemax.";
+    return warning;
 }

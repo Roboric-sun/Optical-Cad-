@@ -86,13 +86,45 @@ with tempfile.TemporaryDirectory(prefix='zemax-files-') as temporary:
         reopened = Project.load(native, executable=binary)
         assert reopened.data == p.data
         analysis = reopened.analyze(pupil_grid=5)
-        assert analysis['analysis_warning'] and analysis['fields'] == []
-        try:
-            reopened.diffraction(size=32)
-        except OpticalCADError as error:
-            assert 'Zemax' in str(error)
-        else:
-            raise AssertionError('Unsupported Zemax image analysis returned a result')
+        assert analysis['analysis_warning'] and analysis['experimental'] is True
+        assert len(analysis['fields']) == len(s['fields'])
+        # The warning must not change calculations. Compare the real imported
+        # geometry with exactly the same geometry without Zemax metadata.
+        plain = Project(p.data, executable=binary)
+        plain.data['workspace'].pop('zemaxImport')
+        plain.data['workspace'].pop('importNotes')
+        expected = plain.analyze(pupil_grid=5)
+        assert analysis['fields'] == expected['fields']
+        calculation_outcomes = {}
+        for operation in ('wavefront', 'diffraction', 'autofocus', 'optimize'):
+            options = {'field': 0, 'size': 32, 'pupil_grid': 17 if operation == 'diffraction' else 9}
+            outcomes = []
+            for source_project in (p, plain):
+                trial = Project(source_project.data, executable=binary)
+                if operation == 'optimize':
+                    # A small, valid plan keeps this regression deterministic.
+                    trial.data['optimization'] = {
+                        'variables': [{'parameter': 0, 'surface': 0, 'lower': -1000, 'upper': 1000, 'step': .01}],
+                        'operands': [{'kind': 0, 'field': 0, 'target': 0, 'scale': 1, 'weight': 1}],
+                        'iterations': 1, 'pupilGrid': 3, 'minimumThroughput': .01,
+                        'refocus': False}
+                try:
+                    value = trial._request(operation, **options)
+                    if source_project is p:
+                        assert value['analysis_warning'] and value['experimental']
+                    for key in ('analysis_warning', 'experimental', 'import_warnings'):
+                        value.pop(key, None)
+                    # Updated projects retain their own source metadata.
+                    value.pop('project', None)
+                    outcomes.append(('result', value))
+                except OpticalCADError as error:
+                    assert 'ТЕСТОВЫЙ РАСЧЁТ' not in str(error)
+                    assert bool(error.analysis_warning) == (source_project is p)
+                    outcomes.append(('calculation_error', str(error)))
+            assert outcomes[0] == outcomes[1], (operation, outcomes)
+            calculation_outcomes[operation] = {'status': outcomes[0][0]}
+            if outcomes[0][0] == 'calculation_error':
+                calculation_outcomes[operation]['error'] = outcomes[0][1]
         # Real rays are traced through the physical elements independently of
         # an afocal or virtual image interpretation. Check each chief ray.
         traced = p._request('trace_rays', field=0, pupils=[[0, 0], [0, 1]])['rays']
@@ -108,6 +140,8 @@ with tempfile.TemporaryDirectory(prefix='zemax-files-') as temporary:
             'pupil_diameter_native_mm': s['pupilDiameter'], 'object_distance_mm': s['objectDistance'],
             'image_z_native_mm': analysis['image_z_mm'], 'efl_mm': analysis.get('efl_mm'),
             'prescription_check': 'passed', 'native_roundtrip': 'passed', 'physical_ray_trace': 'passed',
-            'warnings': metadata['warnings'], 'analysis_warning': analysis['analysis_warning']})
+            'warnings': metadata['warnings'], 'analysis_warning': analysis['analysis_warning'],
+            'experimental': analysis['experimental'], 'calculation_outcomes': calculation_outcomes,
+            'calculated_fields': analysis['fields']})
     (output / 'verification.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-print('Two real Zemax 13 files: all mapped surfaces, STOP, materials, FLOA, native roundtrip and analysis limitations passed')
+print('Two real Zemax 13 files: prescription, native roundtrip and unblocked calculations with warnings passed')

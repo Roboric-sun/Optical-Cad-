@@ -238,6 +238,17 @@ void PlotWidget::paintEvent(QPaintEvent*) {
         return;
     }
     auto& d = *data_;
+    if(!zemaxAnalysisWarning(d.project).isEmpty()) {
+        p.save();
+        const QRectF banner(area.left(),area.top(),area.width(),30);
+        p.fillRect(banner,QColor("#fff3cd"));
+        p.setPen(QColor("#79530a"));
+        QFont warningFont=font();warningFont.setPixelSize(11);warningFont.setBold(true);p.setFont(warningFont);
+        p.drawText(banner.adjusted(6,1,-6,-1),Qt::AlignVCenter|Qt::TextWordWrap,
+                   "Ручное тестирование Zemax — результаты могут быть неточными.");
+        p.restore();
+        area.setTop(area.top()+34);
+    }
     auto& cat = d.project.catalog;
     SequentialSystem physical;
     try { physical = resolvedSystem(d.project.system, cat); }

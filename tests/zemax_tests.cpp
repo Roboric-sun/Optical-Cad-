@@ -95,9 +95,9 @@ int main(int argc,char** argv) {
         changed=bytes;changed.replace("DISZ 46.7","DISZ -1000");
         const auto virtualImage=importZemax(changed);
         near(virtualImage.system.defocus,-1000,1e-12,"negative image interval retained as native defocus");
-        check(!zemaxAnalysisLimitation(virtualImage).isEmpty(),"virtual image requires explicit analysis limitation");
+        check(zemaxAnalysisWarning(virtualImage).contains("ТЕСТОВЫЙ РАСЧЁТ"),"virtual image retains testing warning");
         changed=bytes;changed.replace("FTYP 0 0 3 3 0 0 0","FTYP 0 0 3 3 0 0 1");
-        check(!zemaxAnalysisLimitation(importZemax(changed)).isEmpty(),"afocal flag cannot silently become an ordinary image analysis");
+        check(zemaxAnalysisWarning(importZemax(changed)).contains("Афокальная"),"afocal computation retains its specific warning");
         std::cout<<checks<<" Zemax checks passed\n";
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

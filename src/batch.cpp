@@ -6,6 +6,7 @@
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
     QJsonObject response;
+    QJsonObject request;
     int code=0;
     try {
         QFile input;
@@ -25,8 +26,14 @@ int main(int argc,char** argv) {
         if(bytes.size()>32*1024*1024) throw std::invalid_argument("Request exceeds 32 MB");
         QJsonParseError error;const auto doc=QJsonDocument::fromJson(bytes,&error);
         if(error.error!=QJsonParseError::NoError||!doc.isObject()) throw std::invalid_argument("Invalid request JSON");
-        response={{"ok",true},{"result",executeRequest(doc.object())}};
-    } catch(const std::exception& e) {response={{"ok",false},{"error",QString::fromUtf8(e.what())}};code=1;}
+        request=doc.object();
+        response={{"ok",true},{"result",executeRequest(request)}};
+    } catch(const std::exception& e) {
+        response={{"ok",false},{"error",QString::fromUtf8(e.what())}};code=1;
+        Project context;context.workspace=request["project"].toObject()["workspace"].toObject();
+        const auto warning=zemaxAnalysisWarning(context);
+        if(!warning.isEmpty()) {response["analysis_warning"]=warning;response["experimental"]=true;}
+    }
     const auto output=QJsonDocument(response).toJson(QJsonDocument::Compact)+"\n";
     std::fwrite(output.constData(),1,size_t(output.size()),stdout);
     return code;

@@ -11,14 +11,8 @@ std::shared_ptr<Results> sequentialAnalysis(Project project, int selectedField,
     const Project& model = result->project;
     const int field = result->field;
     auto errors = model.system.validate(model.catalog);
-    const auto limitation=zemaxAnalysisLimitation(model);
-    if(errors.empty() && !limitation.isEmpty()) {
-        result->spots.resize(model.system.fields.size());
-        for(auto& sp:result->spots)sp.rms=std::numeric_limits<double>::quiet_NaN();
-        result->geometryWarning=result->summary=limitation;
-        result->waveError=result->diffractionError=result->fanError=limitation;
-        return result;
-    }
+    const auto warning=zemaxAnalysisWarning(model);
+    result->geometryWarning=warning;
     if (!errors.empty())
         result->error = "Исправьте данные: " + QString::fromStdString(errors.front());
     else
@@ -83,7 +77,8 @@ std::shared_ptr<Results> sequentialAnalysis(Project project, int selectedField,
                 if (clear[i] < model.system.surfaces[i].semiDiameter - 1e-8)
                     ++trimmed;
             if (trimmed) {
-                result->geometryWarning = QString("Края поверхностей обрезаны: %1. Расчёт "
+                if(!result->geometryWarning.isEmpty())result->geometryWarning+='\n';
+                result->geometryWarning += QString("Края поверхностей обрезаны: %1. Расчёт "
                                                   "продолжается; внешние лучи отсекаются.")
                                               .arg(trimmed);
                 focus += " · Обрезка краёв: " + QString::number(trimmed);
@@ -102,5 +97,6 @@ std::shared_ptr<Results> sequentialAnalysis(Project project, int selectedField,
         }
     if (!result->error.isEmpty())
         result->summary = result->error;
+    if(!warning.isEmpty())result->summary=warning+"\n"+result->summary;
     return result;
 }

@@ -98,7 +98,7 @@ Window::Window(QWidget* parent)
     setMinimumSize(1100, 720);
     QApplication::setStyle("Fusion");
     setStyleSheet(officeStyle());
-    setWindowTitle("Optical CAD — Оптический модуль — " + str(project_.system.name));
+    setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " + str(project_.system.name));
     setDockNestingEnabled(true);
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     auto* file = new QMenu("Файл", this);
@@ -160,7 +160,7 @@ Window::Window(QWidget* parent)
             auto imported = importZemax(input.readAll(), project_.catalog);
             setProject(std::move(imported)); path_.clear(); dirty_ = true;
             status_->setText("Zemax ZMX: схема импортирована. DIAM принят как фиксированный световой полудиаметр. Сохраните в .optcad.");
-            if(!zemaxAnalysisLimitation(project_).isEmpty())status_->setText(zemaxAnalysisLimitation(project_));
+            if(!zemaxAnalysisWarning(project_).isEmpty())status_->setText(zemaxAnalysisWarning(project_));
         } catch (const std::exception& e) { error(e); }
     })->setObjectName("importZemaxAction");
     action(edit, "Отменить", QKeySequence::Undo, [this] { undo(); })->setObjectName("undoAction");
@@ -789,7 +789,7 @@ void Window::changed(bool rebuild) {
         rebuildTree();
     }
     debounce_.start();
-    setWindowTitle("Optical CAD — Оптический модуль — " +
+    setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " +
                    (path_.isEmpty()
                         ? str(project_.mode ? project_.scene.name : project_.system.name)
                         : QFileInfo(path_).fileName()) +
@@ -829,7 +829,7 @@ void Window::setProject(Project p) {
     changeMode(project_.mode);
     if (project_.workspace["docks"].isString())
         restoreState(QByteArray::fromBase64(project_.workspace["docks"].toString().toLatin1()));
-    setWindowTitle("Optical CAD — Оптический модуль — " +
+    setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " +
                    str(project_.mode ? project_.scene.name : project_.system.name));
 }
 void Window::changeMode(int mode) {
@@ -861,7 +861,7 @@ void Window::changeMode(int mode) {
     buildRibbon();
     rebuildEditors();
     rebuildTree();
-    setWindowTitle("Optical CAD — Оптический модуль — " +
+    setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " +
                    (path_.isEmpty() ? str(mode ? project_.scene.name : project_.system.name)
                                     : QFileInfo(path_).fileName()) +
                    (dirty_ ? " *" : ""));
@@ -2900,7 +2900,7 @@ void Window::save(bool as) {
         saveProject(path, project_);
         path_ = path;
         dirty_ = false;
-        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path_).fileName());
+        setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " + QFileInfo(path_).fileName());
     } catch (const std::exception& e) {
         error(e);
     }
@@ -2922,7 +2922,7 @@ void Window::open() {
         setProject(std::move(p));
         path_ = exchange ? QString() : path;
         if(zemax)dirty_=true;
-        setWindowTitle("Optical CAD — Оптический модуль — " + QFileInfo(path).fileName());
+        setWindowTitle(QApplication::applicationDisplayName()+" — Оптический модуль — " + QFileInfo(path).fileName());
     } catch (const std::exception& e) {
         error(e);
     }

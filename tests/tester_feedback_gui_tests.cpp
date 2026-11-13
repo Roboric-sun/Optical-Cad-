@@ -143,10 +143,20 @@ size_t testerFeedbackGUIChecks(Window& w,const QString& dir) {
         check(sample.open(QIODevice::ReadOnly),"Real Zemax fixture opens");
         w.setProject(importZemax(sample.readAll()));w.recalculate();
         const auto result=readyResults(w);
-        check(result->error.isEmpty() && !result->geometryWarning.isEmpty(),"Real Zemax geometry loads with an explicit analysis limitation");
-        check(!result->waveError.isEmpty() && !result->diffractionError.isEmpty(),"Unsupported Zemax wavefront and diffraction cannot appear as valid results");
+        check(result->error.isEmpty() && result->geometryWarning.contains("ТЕСТОВЫЙ РАСЧЁТ"),"Real Zemax calculations retain a visible testing warning");
+        check(result->summary.contains("ТЕСТОВЫЙ РАСЧЁТ") && result->spots.size()==w.project().system.fields.size(),"Real Zemax calculations run for every field without the import block");
+        auto plain=w.project();plain.workspace.remove("zemaxImport");plain.workspace.remove("importNotes");
+        const auto expected=sequentialAnalysis(plain,0,std::make_shared<std::atomic<bool>>(false));
+        check(result->waveError==expected->waveError && result->diffractionError==expected->diffractionError,"Only actual algorithm errors are shown, matching the same geometry without import metadata");
+        check(result->spots[0].samples.size()==expected->spots[0].samples.size(),"Zemax warning does not bypass spot calculation");
         PlotWidget layout(View::Layout);layout.resize(960,600);layout.setData(result);
         check(!layout.grab().isNull(),"Imported real Zemax geometry renders in the layout");
+        if(!dir.isEmpty()) {
+            const QString prefix=QString(name).startsWith("Afocal")?"zemax-test-afocal":"zemax-test-virtual";
+            check(layout.grab().save(dir+"/"+prefix+"-layout.png"),"Zemax testing layout screenshot saved");
+            PlotWidget spot(View::Spot);spot.resize(960,600);spot.setData(result);
+            check(spot.grab().save(dir+"/"+prefix+"-spot.png"),"Zemax testing spot screenshot saved");
+        }
     }
     w.setProject(eye);w.recalculate();
     auto wheel=[](PlotWidget& plot,QPointF at){QWheelEvent event(at,plot.mapToGlobal(at.toPoint()),{},QPoint(0,120),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);QApplication::sendEvent(&plot,&event);plot.grab();};

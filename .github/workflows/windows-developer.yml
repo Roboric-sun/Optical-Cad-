@@ -1,0 +1,91 @@
+name: Windows developer build
+on:
+  push:
+    branches: [codex/zemax-developer-1.5.2]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-developer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-developer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          cache: true
+          setup-python: false
+      - name: Configure developer edition
+        run: cmake -S . -B build -DOPTICS_DEVELOPER_BUILD=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Real Zemax comparison reports
+        run: python tests/zemax_file_tests.py build/Release/optics_batch.exe . artifacts/zemax13-comparison
+      - name: Deploy portable package
+        run: cmake --install build --config Release --prefix "${{ github.workspace }}/release"
+      - name: Verify standalone package
+        run: python scripts/verify_installation.py release artifacts/installation-Windows-Developer.json
+      - name: Build developer installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content build/release-label.txt -Raw).Trim()
+          if ($version -notmatch '^1\.5\.2-dev\.zemax\.1$') { throw "Wrong developer version: $version" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DDeveloperBuild=1 "/DAppVersion=$version" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { throw "Developer installer compilation failed" }
+      - name: Test developer installation and uninstall
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "Optical CAD Developer installed"
+          $installer = Get-Item artifacts/OpticalCAD-Developer-*-Setup-Windows-x64.exe
+          $process = Start-Process $installer.FullName -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$destination`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installation failed: $($process.ExitCode)" }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QPA_FONTDIR = "$env:SystemRoot/Fonts"
+          $env:OPTICALCAD_PYTHON = (Get-Command python).Source
+          $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
+          $env:QT_PLUGIN_PATH = ""
+          $env:QT_QPA_PLATFORM_PLUGIN_PATH = ""
+          $report = Join-Path $env:RUNNER_TEMP "developer-installer-check.json"
+          $process = Start-Process "$destination/bin/optical_cad.exe" -ArgumentList "--verify-installation `"$report`"" -Wait -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP/developer-stdout.txt" -RedirectStandardError "$env:RUNNER_TEMP/developer-stderr.txt"
+          Get-Content "$env:RUNNER_TEMP/developer-stdout.txt", "$env:RUNNER_TEMP/developer-stderr.txt"
+          if (Test-Path $report) { Get-Content $report; Copy-Item $report artifacts/developer-installer-check.json }
+          if ($process.ExitCode -ne 0) { throw "Developer app acceptance failed: $($process.ExitCode)" }
+          if (-not (Get-Content $report -Raw | ConvertFrom-Json).ok) { throw "Developer app report failed" }
+          $process = Start-Process "$destination/unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Developer uninstall failed" }
+      - name: Prepare developer downloads
+        shell: pwsh
+        run: |
+          $version = (Get-Content build/release-label.txt -Raw).Trim()
+          Copy-Item "release/OpticalCAD-$version-Windows-x64.zip" artifacts/
+          "Optical CAD Developer $version`nSource: ${{ github.sha }}`nManual Zemax testing; calculation results may be inaccurate." | Set-Content artifacts/DEVELOPER_VERSION.txt -Encoding utf8
+          Get-ChildItem artifacts/OpticalCAD-*.exe, artifacts/OpticalCAD-*.zip | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $($_.Name)"
+          } | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpticalCAD-Developer-1.5.2-dev.zemax.1-Windows-x64
+          path: |
+            artifacts/OpticalCAD-Developer-*-Setup-Windows-x64.exe
+            artifacts/OpticalCAD-*-Windows-x64.zip
+            artifacts/DEVELOPER_VERSION.txt
+            artifacts/SHA256SUMS.txt
+            artifacts/zemax13-comparison
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: developer-verification-reports
+          path: |
+            artifacts/installation-Windows-Developer.json
+            artifacts/developer-installer-check.json
+            build/Testing/Temporary/LastTest.log
